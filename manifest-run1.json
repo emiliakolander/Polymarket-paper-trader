@@ -1,0 +1,51 @@
+{
+  "data_source": "MOCK",
+  "starting_capital": 1000.0,
+  "deposits": 1,
+  "cash": 990.006,
+  "ledger_max_id": 3,
+  "ledger_digest": "8ca28e03ceb3d63a09055c724c63db981c3d49f7f16844fa53a283217c6b712d",
+  "runs": [
+    "365d49652f22425f8ee21641da40ec2d"
+  ],
+  "orders": {
+    "2ef0b2cffe3b46d2a4562f462c852b78": [
+      "FILLED",
+      10.52,
+      4.734,
+      0.0,
+      "CONFIRMED"
+    ],
+    "fa202cc062664f57acc1175e3b1f4115": [
+      "FILLED",
+      10.52,
+      5.26,
+      0.0,
+      "CONFIRMED"
+    ]
+  },
+  "positions": {
+    "7632a8c170dd4694b1ad440ab4511951": {
+      "status": "OPEN",
+      "shares": 10.52,
+      "cost_basis": 4.734,
+      "book": "MAIN",
+      "realized_pnl": 0.0
+    },
+    "15bd891c75494519913bdf1717b77309": {
+      "status": "OPEN",
+      "shares": 10.52,
+      "cost_basis": 5.26,
+      "book": "MAIN",
+      "realized_pnl": 0.0
+    }
+  },
+  "counts": {
+    "signals": 1,
+    "forecasts": 0,
+    "equity_snapshots": 1,
+    "position_marks": 4,
+    "market_snapshots": 2,
+    "events": 0
+  }
+}

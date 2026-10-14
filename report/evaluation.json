@@ -1,0 +1,40 @@
+{
+  "resolved_forecasts": 0,
+  "unresolved_forecasts": 0,
+  "strategies": {
+    "research": {
+      "closed_trades": 0,
+      "open_trades": 0,
+      "wins": 0,
+      "realized_pnl": 0,
+      "fees": 0
+    },
+    "arbitrage": {
+      "closed_trades": 0,
+      "open_trades": 1,
+      "wins": 0,
+      "realized_pnl": 0,
+      "fees": 0.0,
+      "signal_outcomes": {
+        "EXECUTED_HEDGED": 1,
+        "REJECTED": 1
+      }
+    }
+  },
+  "by_method": {},
+  "by_category": {},
+  "by_confidence": {},
+  "by_edge": {},
+  "by_side": {},
+  "by_purpose": {},
+  "calibration": [],
+  "mistake_tags": {},
+  "lessons": [],
+  "current_params": {
+    "min_edge": 0.05,
+    "min_confidence": 0.6,
+    "blocked_categories": []
+  },
+  "params_version": 0,
+  "proposals": []
+}

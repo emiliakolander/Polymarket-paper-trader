@@ -1,0 +1,61 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Paperbot Dashboard</title>
+<style>
+:root{--surface:#fcfcfb;--page:#f4f4f2;--ink:#0b0b0b;--ink2:#52514e;--muted:#8a8984;--rule:#e4e3df;
+--series:#2a78d6;--good:#0ca30c;--warn:#b07800;--crit:#d03b3b;--ref:#a3a29d}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--surface:#1a1a19;--page:#111110;
+--ink:#f0efec;--ink2:#c3c2b7;--muted:#8f8e86;--rule:#2e2e2c;--series:#3987e5;--good:#0ca30c;
+--warn:#fab219;--crit:#e66767;--ref:#6b6a65}}
+:root[data-theme="dark"]{--surface:#1a1a19;--page:#111110;--ink:#f0efec;--ink2:#c3c2b7;--muted:#8f8e86;
+--rule:#2e2e2c;--series:#3987e5;--good:#0ca30c;--warn:#fab219;--crit:#e66767;--ref:#6b6a65}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);
+font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 10px}
+.sub{color:var(--ink2);font-size:13px}.banner{background:var(--surface);border:1px solid var(--rule);
+border-left:4px solid var(--warn);padding:10px 12px;margin:14px 0;color:var(--ink2);font-size:13px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:12px}
+.tile .k{color:var(--ink2);font-size:12px}.tile .v{font-size:22px;font-weight:600;margin-top:2px;
+font-variant-numeric:tabular-nums}.tile .n{color:var(--muted);font-size:12px}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:12px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:6px 8px;
+border-bottom:1px solid var(--rule);vertical-align:top}th{color:var(--ink2);font-weight:500}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;
+border:1px solid currentColor}.GOOD{color:var(--good)}.WARNING{color:var(--warn)}
+.CRITICAL,.UNKNOWN{color:var(--crit)}
+svg text{fill:var(--ink2);font-size:11px}.grid line{stroke:var(--rule)}
+#tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--rule);
+padding:6px 8px;border-radius:6px;font-size:12px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.chartwrap{position:relative;overflow-x:auto}.chartwrap svg{min-width:560px}details{margin-top:8px}summary{cursor:pointer;color:var(--ink2)}
+.reasons{color:var(--ink2);font-size:12px}
+</style></head><body><main>
+<h1>Paperbot — paper trading dashboard</h1>
+<div class="sub">Generated 2026-10-14 17:36:59 UTC ·
+Health <span class="badge GOOD">GOOD</span> ·
+last run 2026-10-14 17:36 ·
+errors 24h: 0</div>
+<div class="banner">PAPER TRADING SIMULATION with virtual money. No real funds, wallets or orders are involved. Simulated fills are approximations of what might have happened. No strategy here is risk-free, and simulated results do not predict real results.</div>
+<div class="tiles"><div class="tile"><div class="k">Equity</div><div class="v">$998.95</div><div class="n">liquidation value at bids</div></div><div class="tile"><div class="k">Net P&amp;L</div><div class="v">-$1.05</div><div class="n">-0.11% vs start</div></div><div class="tile"><div class="k">Realized P&amp;L</div><div class="v">$0.00</div><div class="n">closed + settled</div></div><div class="tile"><div class="k">Unrealized P&amp;L</div><div class="v">-$1.05</div><div class="n">open, after exit fees</div></div><div class="tile"><div class="k">Max drawdown</div><div class="v">0.1%</div><div class="n">now 0.1%</div></div><div class="tile"><div class="k">Win rate</div><div class="v">–</div><div class="n">0 closed trades (arb pair = 1)</div></div><div class="tile"><div class="k">Fees paid</div><div class="v">$0.00</div><div class="n">simulated taker fees</div></div><div class="tile"><div class="k">AI cost (month)</div><div class="v">$0.00</div><div class="n">cap $10.00</div></div><div class="tile"><div class="k">Unverified fills</div><div class="v">0</div><div class="n">shadow book, not counted ($0.00)</div></div></div>
+<h2>Equity</h2><div class="card"><div class="chartwrap"><svg id="eq" viewBox="0 0 900 260" width="100%" role="img" aria-label="Equity over time, liquidation value in US dollars"><g class="grid"><line x1="64" x2="884" y1="232.0" y2="232.0"/><text x="56" y="236.0" text-anchor="end">$997</text><line x1="64" x2="884" y1="177.0" y2="177.0"/><text x="56" y="181.0" text-anchor="end">$998</text><line x1="64" x2="884" y1="122.0" y2="122.0"/><text x="56" y="126.0" text-anchor="end">$999</text><line x1="64" x2="884" y1="67.0" y2="67.0"/><text x="56" y="71.0" text-anchor="end">$1,001</text><line x1="64" x2="884" y1="12.0" y2="12.0"/><text x="56" y="16.0" text-anchor="end">$1,002</text></g><line x1="64" x2="884" y1="99.1" y2="99.1" stroke="var(--ref)" stroke-dasharray="4 4" stroke-width="1"/><text x="884" y="93.1" text-anchor="end">start $1,000.00</text><path d="M64.0,144.9 L884.0,144.9" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><line id="hl" y1="12" y2="232" stroke="var(--muted)" stroke-width="1" style="display:none"/><circle id="hd" r="4" fill="var(--series)" stroke="var(--surface)" stroke-width="2" style="display:none"/><text x="64" y="252">2026-10-14 17:36 UTC</text><text x="884" y="252" text-anchor="end">2026-10-14 17:36 UTC</text></svg><div id="tip"></div></div><script type="application/json" id="eqdata">{"w": 900, "pts": [[64.0, 144.9, "2026-10-14 17:36", 998.948], [884.0, 144.9, "2026-10-14 17:36", 998.948]]}</script>
+<details><summary>Table view</summary><table><thead><tr><th>Time (UTC)</th><th>Equity</th></tr></thead><tbody><tr><td class="">2026-10-14 17:36</td><td class="num">$998.95</td></tr><tr><td class="">2026-10-14 17:36</td><td class="num">$998.95</td></tr></tbody></table></details></div>
+<h2>Open positions</h2><div class="card"><table><thead><tr><th>Market</th><th>Side</th><th>Strategy</th><th>Shares</th><th>Cost</th><th>Value now</th></tr></thead><tbody><tr><td class="">MOCK: Will the test event A happen?</td><td class="">YES</td><td class="">arbitrage</td><td class="num">10.52</td><td class="num">$4.73</td><td class="num">$4.21</td></tr><tr><td class="">MOCK: Will the test event A happen?</td><td class="">NO</td><td class="">arbitrage</td><td class="num">10.52</td><td class="num">$5.26</td><td class="num">$4.73</td></tr></tbody></table></div>
+<h2>Signals acted on</h2><div class="card"><table><thead><tr><th>Time</th><th>Kind</th><th>Market</th><th>Side</th><th>Status</th><th>Cost</th><th>Expected net</th></tr></thead><tbody><tr><td class="">2026-10-14 17:36</td><td class="">arbitrage</td><td class="">MOCK: Will the test event A happen?</td><td class="">YES+NO</td><td class="">EXECUTED_HEDGED</td><td class="num">$9.99</td><td class="num">$0.53</td></tr></tbody></table></div>
+<h2>Rejected signals</h2><div class="card"><table><thead><tr><th>Time</th><th>Kind</th><th>Market</th><th>Reasons</th></tr></thead><tbody><tr><td class="">2026-10-14 17:36</td><td class="">arbitrage</td><td class="">MOCK: Will the test event A happen?</td><td class=""><span class="reasons">ALREADY_IN_MARKET</span></td></tr></tbody></table></div>
+<h2>Orders (incl. failed fills)</h2><div class="card"><table><thead><tr><th>Time</th><th>Side</th><th>Out</th><th>Status</th><th>Verified</th><th>Confirmed/requested</th><th>Avg px</th><th>Fee</th><th>Latency ms</th><th>Note</th></tr></thead><tbody><tr><td class="">2026-10-14 17:36</td><td class="">BUY</td><td class="">NO</td><td class="">FILLED</td><td class="">CONFIRMED</td><td class="num">10.52/10.52</td><td class="num">0.5000</td><td class="num">$0.00</td><td class="num">1090</td><td class=""></td></tr><tr><td class="">2026-10-14 17:36</td><td class="">BUY</td><td class="">YES</td><td class="">FILLED</td><td class="">CONFIRMED</td><td class="num">10.52/10.52</td><td class="num">0.4500</td><td class="num">$0.00</td><td class="num">1105</td><td class=""></td></tr></tbody></table></div>
+<h2>Bot health — recent runs</h2><div class="card"><table><thead><tr><th>Started</th><th>Status</th><th>Errors</th><th>Polymarket API stats</th></tr></thead><tbody><tr><td class="">2026-10-14 17:36</td><td class=""><span class="badge GOOD">OK</span></td><td class="num">0</td><td class="">{&quot;requests&quot;: 4, &quot;errors&quot;: 0, &quot;rate_limited&quot;: 0, &quot;retries&quot;: 0}</td></tr><tr><td class="">2026-10-14 17:36</td><td class=""><span class="badge GOOD">OK</span></td><td class="num">0</td><td class="">{&quot;requests&quot;: 8, &quot;errors&quot;: 0, &quot;rate_limited&quot;: 0, &quot;retries&quot;: 0}</td></tr></tbody></table></div>
+</main><script>
+(function(){const d=JSON.parse(document.getElementById('eqdata').textContent);
+const svg=document.getElementById('eq');if(!svg||d.pts.length<1)return;
+const tip=document.getElementById('tip'),hl=document.getElementById('hl'),dot=document.getElementById('hd');
+svg.addEventListener('mousemove',e=>{const r=svg.getBoundingClientRect();
+const x=(e.clientX-r.left)*(d.w/r.width);let best=0,bd=1e9;
+d.pts.forEach((p,i)=>{const dd=Math.abs(p[0]-x);if(dd<bd){bd=dd;best=i}});
+const p=d.pts[best];hl.setAttribute('x1',p[0]);hl.setAttribute('x2',p[0]);hl.style.display='';
+dot.setAttribute('cx',p[0]);dot.setAttribute('cy',p[1]);dot.style.display='';
+tip.style.display='block';tip.textContent=p[2]+'  ·  $'+p[3].toFixed(2);
+tip.style.left=Math.min(e.clientX-r.left+12,r.width-170)+'px';tip.style.top=(e.clientY-r.top-34)+'px';});
+svg.addEventListener('mouseleave',()=>{tip.style.display='none';hl.style.display='none';dot.style.display='none'});
+})();
+</script></body></html>

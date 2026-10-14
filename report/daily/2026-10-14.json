@@ -1,0 +1,420 @@
+{
+  "date": "2026-10-14",
+  "generated_at": "2026-10-14T17:36:59.462048+00:00",
+  "disclaimer": "PAPER TRADING SIMULATION with virtual money. No real funds, wallets or orders are involved. Simulated fills are approximations of what might have happened. No strategy here is risk-free, and simulated results do not predict real results.",
+  "hypothetical_opportunities": {
+    "count": 2,
+    "by_status": {
+      "arbitrage:EXECUTED_HEDGED": 1,
+      "arbitrage:REJECTED": 1
+    },
+    "items": [
+      {
+        "ts": "2026-10-14T17:36:24.902320+00:00",
+        "kind": "arbitrage",
+        "market_id": "900001",
+        "question": "MOCK: Will the test event A happen?",
+        "outcome": "YES+NO",
+        "status": "EXECUTED_HEDGED",
+        "reasons": [
+          "LEG1_FILLED_CONFIRMED",
+          "LEG2_FILLED_CONFIRMED"
+        ],
+        "edge": 0.052631578947368404,
+        "theoretical_net_usd": 0.5259999999999998,
+        "cost_usd": 9.994,
+        "details": {
+          "shares_per_leg": 10.52,
+          "cost_usd": 9.994,
+          "yes_leg_cost": 4.734,
+          "no_leg_cost": 5.26,
+          "fees_usd": 0.0,
+          "payout_at_resolution_usd": 10.52,
+          "net_if_both_legs_fill_usd": 0.526,
+          "edge_pct": 0.05263,
+          "hypothetical_net_at_top_of_book_usd": 10.0,
+          "yes_limit": 0.45,
+          "no_limit": 0.5,
+          "best_ask_sum": 0.95,
+          "fee_rate": 0.0,
+          "fee_category": "geopolitics",
+          "quote_age_s": 0.25,
+          "market_min_order_size": 5.0,
+          "one_leg_failure_loss_usd": {
+            "YES_first": 0.526,
+            "NO_first": 0.526
+          },
+          "risk_notes": [
+            "Not risk-free: second leg may fail or be unverifiable (leg risk).",
+            "Order book can move before execution; displayed depth may vanish.",
+            "Resolution can be disputed, delayed, or resolve 50/50.",
+            "Capital is locked until resolution.",
+            "Simulated fills; real fills may differ."
+          ]
+        }
+      },
+      {
+        "ts": "2026-10-14T17:36:59.450339+00:00",
+        "kind": "arbitrage",
+        "market_id": "900001",
+        "question": "MOCK: Will the test event A happen?",
+        "outcome": "YES+NO",
+        "status": "REJECTED",
+        "reasons": [
+          "ALREADY_IN_MARKET"
+        ],
+        "edge": 0.052631578947368404,
+        "theoretical_net_usd": 0.5259999999999998,
+        "cost_usd": 9.994,
+        "details": {
+          "shares_per_leg": 10.52,
+          "cost_usd": 9.994,
+          "yes_leg_cost": 4.734,
+          "no_leg_cost": 5.26,
+          "fees_usd": 0.0,
+          "payout_at_resolution_usd": 10.52,
+          "net_if_both_legs_fill_usd": 0.526,
+          "edge_pct": 0.05263,
+          "hypothetical_net_at_top_of_book_usd": 10.0,
+          "yes_limit": 0.45,
+          "no_limit": 0.5,
+          "best_ask_sum": 0.95,
+          "fee_rate": 0.0,
+          "fee_category": "geopolitics",
+          "quote_age_s": 0.5,
+          "market_min_order_size": 5.0,
+          "one_leg_failure_loss_usd": {
+            "YES_first": 0.526,
+            "NO_first": 0.526
+          },
+          "risk_notes": [
+            "Not risk-free: second leg may fail or be unverifiable (leg risk).",
+            "Order book can move before execution; displayed depth may vanish.",
+            "Resolution can be disputed, delayed, or resolve 50/50.",
+            "Capital is locked until resolution.",
+            "Simulated fills; real fills may differ."
+          ]
+        }
+      }
+    ]
+  },
+  "simulated_executions": {
+    "summary": {
+      "orders": 2,
+      "by_status": {
+        "FILLED": 2
+      },
+      "by_verification": {
+        "CONFIRMED": 2
+      },
+      "confirmed_notional": 9.994,
+      "fees": 0.0,
+      "uncertain_notional": 0,
+      "slippage_vs_signal_usd": 0.0
+    },
+    "decisions": [
+      {
+        "decision_at": "2026-10-14T17:36:24.902958+00:00",
+        "order_id": "2ef0b2cffe3b46d2a4562f462c852b78",
+        "strategy": "arbitrage",
+        "market_id": "900001",
+        "token_id": "mockY1",
+        "side": "BUY",
+        "outcome": "YES",
+        "intended": {
+          "shares": 10.52,
+          "limit_price": 0.45,
+          "notional": 4.734,
+          "signal_price": 0.45
+        },
+        "liquidity": {
+          "decision": {
+            "label": "decision",
+            "fetched_at": "2026-10-14T17:36:24.649661+00:00",
+            "server_time": null,
+            "age_s": 0.253,
+            "best_bid": 0.4,
+            "best_ask": 0.45,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 200.0,
+            "usable_shares": 100.0,
+            "notional_at_limit": 90.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockY1"
+          },
+          "execution": {
+            "label": "execution",
+            "fetched_at": "2026-10-14T17:36:26.008395+00:00",
+            "server_time": null,
+            "age_s": 0.0,
+            "best_bid": 0.4,
+            "best_ask": 0.45,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 200.0,
+            "usable_shares": 100.0,
+            "notional_at_limit": 90.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockY1"
+          },
+          "verify_1": {
+            "label": "verify_1",
+            "fetched_at": "2026-10-14T17:36:28.008684+00:00",
+            "server_time": null,
+            "age_s": 0.0,
+            "best_bid": 0.4,
+            "best_ask": 0.45,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 200.0,
+            "usable_shares": 100.0,
+            "notional_at_limit": 90.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockY1"
+          },
+          "verify_2": {
+            "label": "verify_2",
+            "fetched_at": "2026-10-14T17:36:30.008944+00:00",
+            "server_time": null,
+            "age_s": 0.0,
+            "best_bid": 0.4,
+            "best_ask": 0.45,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 200.0,
+            "usable_shares": 100.0,
+            "notional_at_limit": 90.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockY1"
+          }
+        },
+        "status": "FILLED",
+        "verification": "CONFIRMED",
+        "confirmed_shares": 10.52,
+        "avg_price": 0.45,
+        "notional": 4.734,
+        "fee": 0.0,
+        "uncertain_shares": 0.0,
+        "uncertain_notional": 0.0,
+        "latency_ms": 1104.5392107821242,
+        "reason": "",
+        "timing": {
+          "simulated_latency_s": 1.105,
+          "arrival_at": "2026-10-14T17:36:26.007530+00:00",
+          "execution_book_at": "2026-10-14T17:36:26.008395+00:00",
+          "verification_at": [
+            "2026-10-14T17:36:28.008684+00:00",
+            "2026-10-14T17:36:30.008944+00:00"
+          ],
+          "decision_at": "2026-10-14T17:36:24.902958+00:00",
+          "order_created_at": "2026-10-14T17:36:24.902991+00:00"
+        },
+        "position": {
+          "position_id": "7632a8c170dd4694b1ad440ab4511951",
+          "book": "MAIN",
+          "status": "OPEN",
+          "shares_now": 10.52,
+          "exit_conditions": {
+            "hold_to_resolution": true,
+            "resolution_date": "2026-11-13T17:36:24+00:00",
+            "unwind_if_unhedged": true,
+            "stop_loss_pct": null,
+            "take_profit_pct": null,
+            "rule": "hold YES+NO pair to resolution; sell any unhedged excess",
+            "min_order_size": 5.0
+          },
+          "realized_pnl": 0.0,
+          "mtm_pnl": -0.5259999999999998,
+          "close_reason": null
+        }
+      },
+      {
+        "decision_at": "2026-10-14T17:36:24.902958+00:00",
+        "order_id": "fa202cc062664f57acc1175e3b1f4115",
+        "strategy": "arbitrage",
+        "market_id": "900001",
+        "token_id": "mockN1",
+        "side": "BUY",
+        "outcome": "NO",
+        "intended": {
+          "shares": 10.52,
+          "limit_price": 0.5,
+          "notional": 5.26,
+          "signal_price": 0.5
+        },
+        "liquidity": {
+          "decision": {
+            "label": "decision",
+            "fetched_at": "2026-10-14T17:36:24.649661+00:00",
+            "server_time": null,
+            "age_s": 5.361,
+            "best_bid": 0.45,
+            "best_ask": 0.5,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 500.0,
+            "usable_shares": 250.0,
+            "notional_at_limit": 250.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockN1"
+          },
+          "execution": {
+            "label": "execution",
+            "fetched_at": "2026-10-14T17:36:31.101054+00:00",
+            "server_time": null,
+            "age_s": 0.0,
+            "best_bid": 0.45,
+            "best_ask": 0.5,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 500.0,
+            "usable_shares": 250.0,
+            "notional_at_limit": 250.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockN1"
+          },
+          "verify_1": {
+            "label": "verify_1",
+            "fetched_at": "2026-10-14T17:36:33.101343+00:00",
+            "server_time": null,
+            "age_s": 0.0,
+            "best_bid": 0.45,
+            "best_ask": 0.5,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 500.0,
+            "usable_shares": 250.0,
+            "notional_at_limit": 250.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockN1"
+          },
+          "verify_2": {
+            "label": "verify_2",
+            "fetched_at": "2026-10-14T17:36:35.101592+00:00",
+            "server_time": null,
+            "age_s": 0.0,
+            "best_bid": 0.45,
+            "best_ask": 0.5,
+            "spread": 0.04999999999999999,
+            "shares_at_limit": 500.0,
+            "usable_shares": 250.0,
+            "notional_at_limit": 250.0,
+            "min_order_size": 5.0,
+            "tick_size": 0.01,
+            "hash": "mock-mockN1"
+          }
+        },
+        "status": "FILLED",
+        "verification": "CONFIRMED",
+        "confirmed_shares": 10.52,
+        "avg_price": 0.5,
+        "notional": 5.26,
+        "fee": 0.0,
+        "uncertain_shares": 0.0,
+        "uncertain_notional": 0.0,
+        "latency_ms": 1089.9367551922207,
+        "reason": "",
+        "timing": {
+          "simulated_latency_s": 1.09,
+          "arrival_at": "2026-10-14T17:36:31.100292+00:00",
+          "execution_book_at": "2026-10-14T17:36:31.101054+00:00",
+          "verification_at": [
+            "2026-10-14T17:36:33.101343+00:00",
+            "2026-10-14T17:36:35.101592+00:00"
+          ],
+          "decision_at": "2026-10-14T17:36:24.902958+00:00",
+          "order_created_at": "2026-10-14T17:36:30.010355+00:00"
+        },
+        "position": {
+          "position_id": "15bd891c75494519913bdf1717b77309",
+          "book": "MAIN",
+          "status": "OPEN",
+          "shares_now": 10.52,
+          "exit_conditions": {
+            "hold_to_resolution": true,
+            "resolution_date": "2026-11-13T17:36:24+00:00",
+            "unwind_if_unhedged": true,
+            "stop_loss_pct": null,
+            "take_profit_pct": null,
+            "rule": "hold YES+NO pair to resolution; sell any unhedged excess",
+            "min_order_size": 5.0
+          },
+          "realized_pnl": 0.0,
+          "mtm_pnl": -0.5259999999999998,
+          "close_reason": null
+        }
+      }
+    ]
+  },
+  "completed_positions": [],
+  "unresolved_positions": [
+    {
+      "position_id": "7632a8c170dd4694b1ad440ab4511951",
+      "market_id": "900001",
+      "question": "MOCK: Will the test event A happen?",
+      "outcome": "YES",
+      "strategy": "arbitrage",
+      "opened_at": "2026-10-14T17:36:30.009076+00:00",
+      "shares": 10.52,
+      "cost_basis": 4.734,
+      "liquidation_value": 4.208,
+      "mtm_pnl": -0.5259999999999998,
+      "marked_at": "2026-10-14T17:36:59.451552+00:00",
+      "exit_conditions": {
+        "hold_to_resolution": true,
+        "resolution_date": "2026-11-13T17:36:24+00:00",
+        "unwind_if_unhedged": true,
+        "stop_loss_pct": null,
+        "take_profit_pct": null,
+        "rule": "hold YES+NO pair to resolution; sell any unhedged excess",
+        "min_order_size": 5.0
+      },
+      "resolution_date": "2026-11-13T17:36:24+00:00"
+    },
+    {
+      "position_id": "15bd891c75494519913bdf1717b77309",
+      "market_id": "900001",
+      "question": "MOCK: Will the test event A happen?",
+      "outcome": "NO",
+      "strategy": "arbitrage",
+      "opened_at": "2026-10-14T17:36:35.101714+00:00",
+      "shares": 10.52,
+      "cost_basis": 5.26,
+      "liquidation_value": 4.734,
+      "mtm_pnl": -0.5259999999999998,
+      "marked_at": "2026-10-14T17:36:59.451552+00:00",
+      "exit_conditions": {
+        "hold_to_resolution": true,
+        "resolution_date": "2026-11-13T17:36:24+00:00",
+        "unwind_if_unhedged": true,
+        "stop_loss_pct": null,
+        "take_profit_pct": null,
+        "rule": "hold YES+NO pair to resolution; sell any unhedged excess",
+        "min_order_size": 5.0
+      },
+      "resolution_date": "2026-11-13T17:36:24+00:00"
+    }
+  ],
+  "unverified_shadow": {
+    "open": [],
+    "completed": []
+  },
+  "net_performance": {
+    "starting_capital": 1000.0,
+    "equity_start_of_day": 1000.0,
+    "equity_end_of_day": 998.948,
+    "trading_pnl_day": -1.052000000000021,
+    "trading_fees_day": -0.0,
+    "realized_pnl_on_trades_closed_today": 0,
+    "unrealized_pnl_end_of_day": -1.0519999999999996,
+    "ai_cost_day": 0.0,
+    "infra_cost_day": 0.0,
+    "net_after_all_costs_day": -1.052000000000021,
+    "net_after_all_costs_cumulative": -1.052000000000021,
+    "ai_cost_cumulative": 0.0,
+    "infra_cost_cumulative": 0.0,
+    "shadow_unverified_mtm_end_of_day": 0,
+    "shadow_realized_today": 0
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "generated_at": "2026-10-14T17:36:59.459441+00:00",
+  "starting_capital": 1000.0,
+  "equity": 998.948,
+  "cash": 990.006,
+  "positions_value": 8.942,
+  "net_pnl": -1.052000000000021,
+  "net_pnl_pct": -0.001052000000000021,
+  "net_pnl_after_ai_costs": -1.052000000000021,
+  "realized_pnl": 0.0,
+  "unrealized_pnl": -1.0519999999999996,
+  "fees_paid": -0.0,
+  "slippage_vs_signal_usd": 0.0,
+  "ai_cost_month": 0.0,
+  "ai_cost_total": 0.0,
+  "ai_cap": 10.0,
+  "max_drawdown": 0.001052000000000021,
+  "current_drawdown": 0.001052000000000021,
+  "closed_trades": 0,
+  "wins": 0,
+  "win_rate": null,
+  "open_positions": 2,
+  "unmarked_positions": 0,
+  "orders": {
+    "FILLED": 2
+  },
+  "verification": {
+    "CONFIRMED": 2
+  },
+  "shadow_open_positions": 0,
+  "shadow_cost": 0.0,
+  "shadow_value": 0.0,
+  "signals": {
+    "arbitrage:EXECUTED_HEDGED": 1,
+    "arbitrage:REJECTED": 1
+  },
+  "reject_reasons": {
+    "ALREADY_IN_MARKET": 1
+  },
+  "runs": {
+    "OK": 2
+  },
+  "last_run": {
+    "run_id": "3837077f91324fa7888b5be866a7b71f",
+    "started_at": "2026-10-14T17:36:58.692329+00:00",
+    "finished_at": "2026-10-14T17:36:59.455667+00:00",
+    "status": "OK",
+    "errors_json": "[]",
+    "api_stats_json": "{\"requests\": 4, \"errors\": 0, \"rate_limited\": 0, \"retries\": 0}",
+    "summary_json": "{\"run_id\": \"3837077f91324fa7888b5be866a7b71f\", \"crashed_runs_repaired\": 0, \"interrupted_orders_repaired\": 0, \"strategy_params_version\": 0, \"settled\": [], \"forecasts_resolved\": 0, \"postmortems\": 0, \"exits\": [], \"position_reviews\": [], \"unhedged_repair\": [], \"scan\": {\"considered\": 2, \"with_books\": 2, \"rejected\": {}, \"book_errors\": 0}, \"arbitrage\": {\"evaluated\": 2, \"near_misses\": 0, \"approved\": 0, \"rejected\": 1, \"executed\": {}}, \"research\": {\"enabled\": false}, \"equity\": {\"cash\": 990.006, \"positions_value\": 8.942, \"equity\": 998.948, \"peak_equity\": 1000.0, \"drawdown\": 0.0011, \"realized_pnl\": 0.0, \"unrealized_pnl\": -1.052, \"fees_total\": -0.0, \"ai_cost_total\": 0.0, \"unmarked_positions\": 0}, \"shadow\": {\"value\": 0.0, \"unmarked\": 0}, \"proposal_tests\": [], \"new_proposal\": null, \"pruned_snapshots\": 0, \"status\": \"OK\"}"
+  },
+  "last_ok_run": "2026-10-14T17:36:58.692329+00:00",
+  "errors_24h": 0,
+  "api_stats_last_run": {
+    "requests": 4,
+    "errors": 0,
+    "rate_limited": 0,
+    "retries": 0
+  },
+  "health": "GOOD",
+  "halted": false
+}
