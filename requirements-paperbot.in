@@ -1,0 +1,15 @@
+# paperbot runtime + test dependencies (kept deliberately small).
+# Lock file with hashes: requirements-paperbot.txt. Regenerate with:
+#   pip-compile --generate-hashes --allow-unsafe --strip-extras --no-header \
+#     --pip-args="--only-binary=:all:" -o requirements-paperbot.txt requirements-paperbot.in
+# Policy: only versions released >= 14 days before locking (supply-chain safety).
+requests==2.34.2
+PyYAML==6.0.3
+anthropic==1.9.0      # only imported when research.enabled is true
+pytest==9.1.1
+
+# Transitive pins held back by the 14-day policy (locked 2026-10-14):
+pydantic==2.13.5
+charset-normalizer==3.5.1
+truststore==0.10.4
+iniconfig==2.3.0

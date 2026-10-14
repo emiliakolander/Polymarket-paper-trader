@@ -1,0 +1,85 @@
+# Scheduled paper-trading cycle on GitHub Actions.
+#
+# OFF by default. It only runs when the repository variable
+# PAPERBOT_ENABLED is set to "true" (Settings -> Secrets and variables ->
+# Actions -> Variables). The paid Claude research agent additionally needs
+# PAPERBOT_RESEARCH = "true" and the secret ANTHROPIC_API_KEY.
+#
+# State (SQLite DB, report, dashboard) lives on the `paperbot-data` branch,
+# rewritten as a single commit each run so the git history does not grow.
+# No wallet, no private key, no trading credentials exist anywhere here.
+
+name: paperbot-scheduled
+
+on:
+  schedule:
+    - cron: "17 * * * *"      # hourly at :17 UTC (~720 runs/month)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write              # only to push the paperbot-data branch
+
+concurrency:
+  group: paperbot-state
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    if: vars.PAPERBOT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PAPER_MODE: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned dependencies (hash-checked, wheels only)
+        run: pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+
+      - name: Restore state from paperbot-data branch
+        run: |
+          if git ls-remote --exit-code --heads origin paperbot-data >/dev/null; then
+            git fetch --depth=1 origin paperbot-data
+            git worktree add --detach state FETCH_HEAD
+          else
+            git worktree add --detach state HEAD
+            git -C state rm -rf --quiet .
+          fi
+          mkdir -p state
+
+      - name: Run one paper-trading cycle
+        env:
+          ANTHROPIC_API_KEY: ${{ vars.PAPERBOT_RESEARCH == 'true' && secrets.ANTHROPIC_API_KEY || '' }}
+        run: |
+          python -m paperbot --db state/paperbot.sqlite run \
+            --report-dir state/report --site-dir state/site \
+            ${{ vars.PAPERBOT_RESEARCH == 'true' && '--enable-research' || '' }}
+
+      - name: Save state to paperbot-data branch
+        if: always()
+        run: |
+          cd state
+          printf '*-wal\n*-shm\n' > .gitignore
+          git config user.name "paperbot"
+          git config user.email "paperbot@users.noreply.github.com"
+          git checkout --orphan paperbot-data-tmp
+          git add -A
+          git commit --quiet -m "paperbot state $(date -u +%Y-%m-%dT%H:%MZ)" || exit 0
+          git push --force origin HEAD:paperbot-data
+
+      - name: Upload dashboard + report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperbot-dashboard
+          path: |
+            state/site/
+            state/report/
+          retention-days: 14
+          if-no-files-found: ignore

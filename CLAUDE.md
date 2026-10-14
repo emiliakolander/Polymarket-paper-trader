@@ -6,7 +6,15 @@ Autonomous paper trading bot for [Polymarket](https://polymarket.com) prediction
 
 ---
 
-## How to run
+## paperbot (new, preferred) vs legacy `src/`
+
+`paperbot/` is a separate package (order-book execution, real fees, persistent AI budget).
+Docs: `docs/PAPERBOT.md`, audit: `docs/AUDIT.md`. Tests: `python -m pytest -c pytest-paperbot.ini`
+(requires `PAPER_MODE=true` only for CLI runs; tests set it themselves). Rules for paperbot:
+never add order-placement/signing code or wallet handling; never value positions at midpoints;
+every new limit goes in `config/paperbot.yaml` and `paperbot/risk.py` with a test.
+
+## How to run (legacy bot)
 
 ```bash
 # Activate venv first
