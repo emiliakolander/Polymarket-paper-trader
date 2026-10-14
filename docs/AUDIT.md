@@ -49,6 +49,24 @@ build container (blocked by its network policy).
 - **Not verified live:** exact rate limits, and whether `/book` includes a `timestamp` field.
   paperbot handles both cases (it backs off on 429, and falls back to fetch time when no server timestamp is present).
 
+## Live verification (2026-10-14, from GitHub Actions runners)
+
+Reached the real public APIs from GitHub-hosted runners (the build container was blocked):
+
+- Gamma `/markets`: real markets, `outcomes`/`clobTokenIds`/`outcomePrices` as JSON strings,
+  `orderMinSize` 5 and `orderPriceMinTickSize` 0.01 on sampled markets.
+- **Fees:** each market has its own `feeSchedule` (e.g. `{"rate": 0.05, "exponent": 1,
+  "takerOnly": true}`), plus `feesEnabled` and `feeType` (e.g. `sports_fees_v3`,
+  `economics_fees`). paperbot now uses the per-market schedule first. Sports were observed
+  at 0.05, which settles the 0.03 vs 0.05 disagreement between third-party sources.
+  Categories need `include_tag=true` on `/markets`; without it every market looked
+  "unknown" and got the conservative 7% rate.
+- CLOB `/book` and `/books`: real depth (dozens of levels), `min_order_size`, `tick_size`,
+  a `hash`, and a server `timestamp` (so quote age can be measured).
+- CLOB `/fee-rate` returns `{"base_fee": 1000}`. This is an order-signing parameter, not
+  the effective taker rate, so it is not used.
+- No YES+NO arbitrage was present in the 60 most liquid markets (best asks summed to $1.01).
+
 ## paperbot security properties
 
 - `PAPER_MODE=true` is required at startup and is re-checked before every simulated order.

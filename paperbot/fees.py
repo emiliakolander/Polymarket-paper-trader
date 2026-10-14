@@ -42,6 +42,46 @@ def classify_category(labels: list[str]) -> str | None:
     return None
 
 
+def category_from_fee_type(fee_type) -> str | None:
+    """Gamma `feeType` such as 'sports_fees_v3' or 'economics_fees' -> 'sports' / 'economics'."""
+    if not isinstance(fee_type, str) or "_fee" not in fee_type:
+        return None
+    cat = fee_type.split("_fee")[0].strip().lower()
+    return cat or None
+
+
+def market_fee(raw: dict, labels: list[str], cfg: FeeConfig) -> tuple[float, str, str]:
+    """Returns (taker_fee_rate, category, source) for one Gamma market.
+
+    Priority (verified against live Gamma data on 2026-10-14):
+      1. feesEnabled == false                     -> 0, source 'fees_disabled'
+      2. the market's own feeSchedule.rate         -> source 'market_fee_schedule'
+      3. category from feeType / tags + YAML table -> source 'category_table'
+      4. highest configured rate                   -> source 'conservative_default'
+    Fee per share = rate * (p*(1-p))**exponent. For exponent >= 1 we use exponent 1,
+    which can only OVER-state the fee (p*(1-p) <= 0.25). An exponent < 1 cannot be
+    bounded by the exponent-1 formula, so such markets are reported as
+    'unsupported_fee_schedule' and the scanner skips them (none observed live).
+    """
+    category = category_from_fee_type(raw.get("feeType")) or classify_category(labels) or "unknown"
+    if raw.get("feesEnabled") is False:
+        return 0.0, category, "fees_disabled"
+    sched = raw.get("feeSchedule")
+    if isinstance(sched, dict):
+        try:
+            rate = float(sched.get("rate"))
+            exponent = float(sched.get("exponent", 1) or 1)
+            if exponent < 1:
+                return rate, category, "unsupported_fee_schedule"
+            if 0 <= rate <= 1:
+                return rate, category, "market_fee_schedule"
+        except (TypeError, ValueError):
+            pass
+    if category in cfg.category_rates:
+        return float(cfg.category_rates[category]), category, "category_table"
+    return float(cfg.unknown_category_rate), category, "conservative_default"
+
+
 def fee_rate_for(labels: list[str], cfg: FeeConfig) -> tuple[float, str]:
     """Returns (taker_fee_rate, category_used). Unknown -> conservative rate."""
     category = classify_category(labels)

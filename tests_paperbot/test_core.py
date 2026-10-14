@@ -256,3 +256,26 @@ def test_fee_category_mapping_and_conservative_default():
     assert fee_rate_for([], cfg.fees) == (0.07, "unknown")
     assert fee_rate_for(["Weird Stuff"], cfg.fees) == (0.07, "unknown")
     assert classify_category(["US-current-affairs", "Elections"]) == "politics"
+
+
+# ---- fee data as returned by LIVE Gamma (shape observed on 2026-10-14)
+def test_market_fee_schedule_from_live_shape_is_authoritative():
+    from paperbot.fees import market_fee
+    cfg = load_config()
+    raw = {"feeSchedule": {"exponent": 1, "rate": 0.05, "takerOnly": True, "rebateRate": 0.25},
+           "feeType": "economics_fees", "feesEnabled": True,
+           "tags": ["Recurring", "US CPI", "Fed", "fomc", "Trump", "Economy"]}
+    assert market_fee(raw, raw["tags"], cfg.fees) == (0.05, "economics", "market_fee_schedule")
+    assert market_fee({**raw, "feesEnabled": False}, [], cfg.fees)[0::2] == (0.0, "fees_disabled")
+    no_sched = {"feeType": "sports_fees_v3", "tags": ["Sports"]}
+    assert market_fee(no_sched, ["Sports"], cfg.fees) == (0.05, "sports", "category_table")
+    assert market_fee({}, [], cfg.fees) == (0.07, "unknown", "conservative_default")
+    # exponent < 1 cannot be bounded by the exponent-1 formula -> market is skipped
+    assert market_fee({"feeSchedule": {"rate": 0.04, "exponent": 0.5}}, [], cfg.fees)[2] == \
+        "unsupported_fee_schedule"
+    from paperbot.scanner import parse_market
+    from .conftest import raw_market
+    m, why = parse_market(raw_market(feeSchedule={"rate": 0.04, "exponent": 0.5}), cfg)
+    assert m is None and why == "UNSUPPORTED_FEE_SCHEDULE"
+    m, _ = parse_market(raw_market(feeSchedule={"rate": 0.04, "exponent": 2}), cfg)
+    assert m.fee_rate == 0.04 and m.fee_source == "market_fee_schedule"  # exponent>1: overstated, safe

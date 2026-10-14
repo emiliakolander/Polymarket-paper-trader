@@ -54,7 +54,9 @@ def run_check(client: PolymarketClient, cfg, now: datetime) -> dict:
         else:
             parsed.append(m)
     report["markets"] = {"received": len(raws), "binary_yes_no": len(parsed), "rejected": rejected,
-                         "fee_categories": sorted({m.fee_category for m in parsed})}
+                         "fee_categories": sorted({m.fee_category for m in parsed}),
+                         "fee_sources": {src: sum(1 for m in parsed if m.fee_source == src)
+                                         for src in sorted({m.fee_source for m in parsed})}}
     if not parsed:
         report["ok"] = False
         return report
@@ -74,6 +76,7 @@ def run_check(client: PolymarketClient, cfg, now: datetime) -> dict:
         ev = arbitrage.evaluate(m, cfg.arbitrage, now, exec_cfg=cfg.execution)
         books.append({
             "market_id": m.market_id, "question": m.question[:90], "fee_category": m.fee_category,
+            "fee_rate": m.fee_rate, "fee_source": m.fee_source,
             "yes_best_bid": m.yes_book.best_bid, "yes_best_ask": m.yes_book.best_ask,
             "no_best_bid": m.no_book.best_bid, "no_best_ask": m.no_book.best_ask,
             "yes_levels": [len(m.yes_book.bids), len(m.yes_book.asks)],

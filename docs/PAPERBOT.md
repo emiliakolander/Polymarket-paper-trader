@@ -257,7 +257,9 @@ A refused request is recorded and skipped instead.
   run is the live verification.
 - Hourly scheduling will rarely catch real arbitrage. Those gaps are usually closed within
   seconds by faster bots. Expect mostly "near misses" and rejections. That is a realistic result, not a bug.
-- Fee categories are inferred from Gamma category/tag labels. Unknown categories get the highest rate.
+- Fees use each market's own `feeSchedule` from Gamma (verified live). Only when it is
+  missing are category tags used, and only when those are missing the highest rate (7%).
+  Markets with a fee exponent below 1 are skipped (not bounded by the formula used).
 - Order-book "updates" are taken as repeated REST snapshots (execution + 2 verification
   samples per order, plus one scan per run). The CLOB WebSocket stream is not used: its
   message format could not be verified from the build container. Liquidity that appears

@@ -13,7 +13,7 @@ from typing import Optional
 
 from paperbot.config import Config
 from paperbot.db import Database, parse_iso
-from paperbot.fees import fee_rate_for
+from paperbot.fees import market_fee
 from paperbot.orderbook import BookError, OrderBook, parse_book
 from paperbot.polymarket import PolymarketClient
 
@@ -38,6 +38,7 @@ class Market:
     description: str = ""
     order_min_size: float = 0.0          # Gamma orderMinSize (fallback if the book lacks it)
     tick_size: Optional[float] = None    # Gamma orderPriceMinTickSize
+    fee_source: str = "conservative_default"
     yes_book: Optional[OrderBook] = None
     no_book: Optional[OrderBook] = None
 
@@ -77,6 +78,8 @@ def _labels(raw: dict) -> list[str]:
     for tag in raw.get("tags") or []:
         if isinstance(tag, dict) and isinstance(tag.get("label"), str):
             labels.append(tag["label"])
+        elif isinstance(tag, str):
+            labels.append(tag)
     return labels
 
 
@@ -101,7 +104,9 @@ def parse_market(raw: dict, cfg: Config) -> tuple[Optional[Market], str]:
     if not raw.get("conditionId"):
         return None, "NO_CONDITION_ID"
     labels = _labels(raw)
-    rate, category = fee_rate_for(labels, cfg.fees)
+    rate, category, fee_source = market_fee(raw, labels, cfg.fees)
+    if fee_source == "unsupported_fee_schedule":
+        return None, "UNSUPPORTED_FEE_SCHEDULE"
     return Market(
         market_id=str(raw["id"]),
         condition_id=str(raw["conditionId"]),
@@ -121,6 +126,7 @@ def parse_market(raw: dict, cfg: Config) -> tuple[Optional[Market], str]:
         description=str(raw.get("description") or "")[:4000],
         order_min_size=_f(raw.get("orderMinSize")) or 0.0,
         tick_size=_f(raw.get("orderPriceMinTickSize")),
+        fee_source=fee_source,
     ), ""
 
 

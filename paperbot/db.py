@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS market_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, ts TEXT NOT NULL,
     market_id TEXT NOT NULL, condition_id TEXT, question TEXT, slug TEXT, end_date TEXT,
-    fee_category TEXT, fee_rate REAL, liquidity REAL, volume_24h REAL,
+    fee_category TEXT, fee_rate REAL, fee_source TEXT, liquidity REAL, volume_24h REAL,
     indicative_bid REAL, indicative_ask REAL, neg_risk INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_ms_market ON market_snapshots(market_id, ts);
@@ -219,6 +219,7 @@ class Database:
         ("positions", "book", "TEXT NOT NULL DEFAULT 'MAIN'"),
         ("positions", "exit_conditions_json", "TEXT"), ("positions", "entry_order_id", "TEXT"),
         ("ledger", "book", "TEXT NOT NULL DEFAULT 'MAIN'"),
+        ("market_snapshots", "fee_source", "TEXT"),
     ]
 
     def _migrate(self) -> None:
@@ -350,10 +351,11 @@ class Database:
     def insert_market_snapshot(self, run_id: str, now: datetime, m: Any) -> None:
         self.conn.execute(
             "INSERT INTO market_snapshots(run_id,ts,market_id,condition_id,question,slug,end_date,"
-            "fee_category,fee_rate,liquidity,volume_24h,indicative_bid,indicative_ask,neg_risk) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "fee_category,fee_rate,fee_source,liquidity,volume_24h,indicative_bid,indicative_ask,"
+            "neg_risk) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (run_id, iso(now), m.market_id, m.condition_id, m.question, m.slug,
              iso(m.end_date) if m.end_date else None, m.fee_category, m.fee_rate,
+             getattr(m, "fee_source", None),
              m.liquidity, m.volume_24h, m.indicative_bid, m.indicative_ask, int(m.neg_risk)),
         )
 
