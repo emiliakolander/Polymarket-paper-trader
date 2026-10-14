@@ -1,0 +1,23 @@
+# Always-on option for later (e.g. a small VPS or container host).
+# Not needed for the scheduled GitHub Actions setup.
+#
+#   docker build -f Dockerfile.paperbot -t paperbot .
+#   docker run -d --name paperbot -e PAPER_MODE=true -v paperbot-data:/app/data paperbot
+#
+# Persist /app/data (SQLite DB, report, dashboard) on a volume.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PAPER_MODE=true
+WORKDIR /app
+
+COPY requirements-paperbot.txt .
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+
+COPY paperbot/ paperbot/
+COPY config/paperbot.yaml config/paperbot.yaml
+
+RUN useradd --create-home --uid 10001 bot && mkdir -p /app/data && chown bot /app/data
+USER bot
+
+CMD ["python", "-m", "paperbot", "loop", "--interval", "300", \
+     "--report-dir", "data/report", "--site-dir", "data/site"]

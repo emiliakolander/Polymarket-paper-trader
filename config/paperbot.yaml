@@ -1,0 +1,137 @@
+# =====================================================================
+# paperbot — configuration (PAPER TRADING ONLY)
+# =====================================================================
+# All tuneable parameters live here. Secrets (ANTHROPIC_API_KEY) come
+# from the environment only — never put them in this file.
+#
+# There is deliberately NO setting for wallets, private keys or live
+# trading. The bot refuses to start unless PAPER_MODE=true.
+# =====================================================================
+
+starting_capital_usd: 1000.0          # VIRTUAL money
+database_path: data/paperbot.sqlite
+
+api:
+  gamma_base: "https://gamma-api.polymarket.com"   # public market metadata
+  clob_base: "https://clob.polymarket.com"         # public order books (read-only)
+  timeout_s: 10
+  min_interval_s: 0.25                # client-side throttle between requests
+  max_retries: 3                      # on 429 / 5xx / connection errors
+  max_backoff_s: 30
+  user_agent: "paperbot/0.1 (paper-trading research; read-only)"
+
+scanner:
+  max_markets: 400                    # markets pulled from Gamma per run
+  page_size: 100
+  min_liquidity_usd: 5000
+  min_volume_24h_usd: 1000
+  max_books_per_run: 60               # markets whose full order books we fetch
+  snapshot_levels: 5                  # order-book levels stored per side
+  snapshot_retention_days: 14         # older raw market/book snapshots are pruned
+
+fees:
+  # Taker fee = shares * rate * p * (1 - p). Makers pay 0.
+  # Rates per category from docs.polymarket.com (fees / maker-rebates pages),
+  # checked 2026-10-14. Re-check periodically: Polymarket changes these.
+  category_rates:
+    crypto: 0.07
+    sports: 0.05
+    finance: 0.04
+    politics: 0.04
+    economics: 0.05
+    culture: 0.05
+    tech: 0.04
+    geopolitics: 0.0
+    other: 0.05
+  # When a market's category cannot be determined, assume the HIGHEST rate.
+  unknown_category_rate: 0.07
+
+arbitrage:
+  min_net_edge_pct: 0.01              # net profit / cost after fees, >= 1%
+  min_net_profit_usd: 0.10
+  target_pair_cost_usd: 10.0          # intended cost of YES+NO; never upsized to meet minimums
+  max_one_leg_loss_usd: 3.0           # max loss if leg 2 fails and leg 1 is sold back at bids
+  depth_participation: 0.5            # assume we only get 50% of displayed size
+  slippage_buffer: 0.003              # extra $/share-pair safety margin
+  max_days_to_resolution: 90          # capital lock-up limit
+
+research:
+  enabled: false                      # PAID (Claude API). Off until approved.
+  model: "claude-opus-5-5"
+  effort: "low"
+  max_tokens: 4000
+  max_web_searches: 3                 # per market analysed
+  min_days_to_resolution: 7           # only slower-moving markets
+  max_markets_per_run: 2
+  max_calls_per_day: 2
+  recheck_hours: 72                   # don't re-research a market sooner
+  min_edge: 0.05                      # p_model - executable price, after fees
+  min_confidence: 0.6
+  kelly_fraction: 0.25                # cap: never more than this fraction of Kelly
+  target_order_usd: 3.0               # intended size; REJECTED (not upsized) if below market minimums
+  max_days_to_resolution: 120         # don't lock capital in very long markets
+  prompt_version: "v2-trackrecord"    # recorded with every forecast for method comparison
+  blocked_categories: []              # may be extended by validated learning proposals
+  min_evidence_items: 2
+
+budget:
+  monthly_ai_cap_usd: 10.0            # HARD cap. AI calls stop when reached.
+  web_search_usd_per_search: 0.01     # $10 / 1,000 searches
+  # Assumed input tokens added per web search, used for the worst-case
+  # pre-authorisation estimate (deliberately generous).
+  est_input_tokens_per_search: 25000
+  est_prompt_tokens: 3000
+  pricing_usd_per_mtok:               # [input, output]
+    claude-opus-5-5: [4.0, 20.0]
+    claude-sonnet-5-5: [2.0, 10.0]
+    claude-haiku-5-5: [0.10, 0.50]
+  unknown_model_pricing: [10.0, 50.0] # conservative fallback
+  infra_cost_usd_per_month: 0.0       # e.g. a VPS later; deducted in daily net performance
+
+risk:
+  max_position_pct: 0.05              # max cost of one new position vs equity
+  max_total_exposure_pct: 0.50        # all open positions vs equity
+  max_per_market_pct: 0.08
+  max_open_positions: 10
+  min_trade_usd: 1.0                  # market minimums are enforced separately
+  min_cash_reserve_pct: 0.20
+  max_spread: 0.05                    # research trades: best ask - best bid
+  max_quote_age_s: 30                 # order book must be this fresh
+  daily_loss_limit_pct: 0.03          # stop new entries for the UTC day
+  max_drawdown_pct: 0.15              # halt new entries (manual reset needed)
+  max_trades_per_day: 10
+  min_hours_to_resolution: 2
+  stop_loss_pct: 0.35                 # research positions, on liquidation value
+  take_profit_pct: 0.0                # 0 = disabled: hold to resolution
+
+execution:
+  latency_s: 1.0                      # base delay between decision and order arrival
+  latency_jitter_s: 0.5               # + uniform random 0..jitter (seeded per order)
+  verify_delay_s: 2.0                 # wait between verification book samples
+  verify_samples: 2                   # later snapshots that must still show the liquidity
+  limit_slippage_pct: 0.02            # never pay > signal price * (1 + this)
+  depth_participation: 0.5
+  random_reject_rate: 0.02            # simulated exchange/order rejections
+  unwind_unhedged: true               # arbitrage: sell the orphan leg
+  # Conservative order-validity assumptions (see docs/PAPERBOT.md):
+  min_marketable_notional_usd: 1.0    # marketable orders below $1 are treated as invalid
+  share_decimals: 2                   # order sizes rounded DOWN to 0.01 shares
+  default_tick_size: 0.01             # used only if neither book nor Gamma gives a tick size
+
+learning:
+  enabled: true
+  llm_postmortems: true               # explain mistakes with Claude; only if research is enabled
+  max_postmortems_per_day: 2
+  resolve_checks_per_run: 20          # markets checked for resolution per run (free API)
+  lessons_in_prompt: 5                # past lessons shown to the research agent
+  proposal_interval_days: 7           # how often improvement proposals are generated
+  min_train_samples: 15               # resolved forecasts needed before proposing anything
+  min_test_samples: 20                # NEW resolved forecasts needed before applying a proposal
+  max_test_samples: 80                # give up on a proposal after this many without passing
+  improvement_margin: 0.02            # required out-of-sample gain per $1 staked
+  auto_apply: true                    # only bounded strategy filters below; never risk limits
+  min_edge_bounds: [0.03, 0.20]
+  min_confidence_bounds: [0.50, 0.90]
+  fair_value_margin: 0.01             # sell when bid-after-fees >= our probability - margin
+  review_research_hours: 72           # re-research held positions this often (paid, budgeted)
+  max_reviews_per_run: 1

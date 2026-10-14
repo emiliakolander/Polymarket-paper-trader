@@ -1,3 +1,8 @@
+> **New (2026-10): `paperbot/`** — a separate, order-book-based research & paper-trading
+> system with realistic fills, Polymarket taker fees, a hard $10/month AI cap and a
+> scheduled GitHub Actions job. Start with [docs/PAPERBOT.md](docs/PAPERBOT.md); audit
+> findings for the legacy bot below are in [docs/AUDIT.md](docs/AUDIT.md).
+
 # Polymarket Paper Trading Bot
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)

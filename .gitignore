@@ -89,3 +89,7 @@ desktop.ini
 
 # --- Archives ---
 files/
+
+# --- paperbot local outputs ---
+out/
+state/

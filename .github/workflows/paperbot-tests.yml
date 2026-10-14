@@ -1,0 +1,32 @@
+name: paperbot-tests
+
+on:
+  push:
+    paths: ["paperbot/**", "tests_paperbot/**", "config/paperbot.yaml",
+            "requirements-paperbot.txt", ".github/workflows/paperbot-*.yml"]
+  pull_request:
+    paths: ["paperbot/**", "tests_paperbot/**", "config/paperbot.yaml",
+            "requirements-paperbot.txt", ".github/workflows/paperbot-*.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PAPER_MODE: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned dependencies (hash-checked, wheels only)
+        run: |
+          pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+      - name: Run tests (no network, no API keys)
+        run: python -m pytest -c pytest-paperbot.ini

@@ -17,7 +17,8 @@ httpx==0.27.2
 anthropic==0.39.0
 
 # --- Polymarket SDK ---
-py-clob-client==0.20.0
+# py-clob-client removed (2026-10-14 audit): it is the real-money order-signing SDK,
+# it was never imported, and its pinned version exists only as a source package.
 
 # --- News sources ---
 newsapi-python==0.2.7
