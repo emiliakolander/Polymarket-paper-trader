@@ -193,3 +193,18 @@ class MarketScanner:
             result.markets.append(m)
         return result
 
+
+
+def load_market(cfg: Config, client: PolymarketClient, market_id: str,
+                now: datetime) -> Optional[Market]:
+    """Fetch one market with live books (used to re-review held positions)."""
+    try:
+        m, _ = parse_market(client.get_market(market_id), cfg)
+        if m is None:
+            return None
+        raw = client.get_books([m.yes_token, m.no_token])
+        m.yes_book = parse_book(raw[m.yes_token], m.yes_token, fetched_at=now)
+        m.no_book = parse_book(raw[m.no_token], m.no_token, fetched_at=now)
+        return m
+    except Exception:
+        return None

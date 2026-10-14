@@ -18,17 +18,17 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
-from paperbot import arbitrage
+from paperbot import arbitrage, evaluation, learning
 from paperbot.budget import AIBudget
 from paperbot.config import Config
-from paperbot.db import Database, new_id
+from paperbot.db import Database, iso, new_id, parse_iso
 from paperbot.execution import PaperExecutor, utcnow
 from paperbot.polymarket import PolymarketClient
 from paperbot.portfolio import Portfolio, exit_conditions, hours_until
 from paperbot.research import ResearchAgent, anthropic_client_factory, compute_signal
 from paperbot.risk import RiskEngine, TradeProposal
 from paperbot.safety import startup_checks
-from paperbot.scanner import Market, MarketScanner
+from paperbot.scanner import Market, MarketScanner, load_market
 
 LOCK_TTL_S = 1800
 
@@ -43,8 +43,10 @@ class Engine:
         clock: Callable[[], datetime] = utcnow,
         sleep: Callable[[float], None] = time.sleep,
         env: Optional[dict] = None,
+        data_source: Optional[str] = None,
     ) -> None:
         self.cfg = cfg
+        self.data_source = data_source
         self.clock = clock
         self.sleep = sleep
         self.env = env
@@ -57,6 +59,13 @@ class Engine:
         now = self.clock()
         db = Database(self.cfg.database_path)
         db.initialize(self.cfg.starting_capital_usd, now)
+        if self.data_source:
+            existing = db.get_meta("data_source")
+            if existing and existing != self.data_source:
+                db.close()
+                raise RuntimeError(f"database holds {existing} data; refusing a {self.data_source} "
+                                   "run (never mix mock and live market data)")
+            db.set_meta("data_source", self.data_source)
         run_id = new_id()
         if not db.acquire_lock(run_id, now, LOCK_TTL_S):
             db.log_event(now, "WARN", "RUN_SKIPPED_LOCKED", "another run holds the lock")
@@ -95,8 +104,14 @@ class Engine:
 class _RunContext:
     def __init__(self, engine: Engine, db: Database, run_id: str, errors: list, summary: dict):
         self.e = engine
-        self.cfg = engine.cfg
         self.db = db
+        # Effective strategy filters: validated learning results over the YAML values.
+        try:
+            self.cfg = evaluation.apply_params(engine.cfg, evaluation.current_params(db, engine.cfg))
+        except ValueError as exc:
+            self.cfg = engine.cfg
+            errors.append({"stage": "params", "error": f"invalid learned params ignored: {exc}"})
+        summary["strategy_params_version"] = evaluation.params_version(db)
         self.run_id = run_id
         self.errors = errors
         self.summary = summary
@@ -124,8 +139,14 @@ class _RunContext:
 
     def execute(self) -> None:
         self.summary["settled"] = self.stage("settle", lambda: self.portfolio.settle_resolved(self.now())) or []
+        if self.cfg.learning.enabled:
+            self.summary["forecasts_resolved"] = len(self.stage(
+                "resolve_forecasts", lambda: learning.resolve_forecasts(
+                    self.db, self.e.client, self.now(), self.cfg.learning.resolve_checks_per_run)) or [])
+            self.summary["postmortems"] = self.stage("postmortems", self.postmortems) or 0
         self.stage("mark", self.remark)
         self.summary["exits"] = self.stage("exits", self.apply_exits) or []
+        self.summary["position_reviews"] = self.stage("position_reviews", self.review_positions) or []
         self.summary["unhedged_repair"] = self.stage(
             "unhedged_repair", lambda: arbitrage.repair_unhedged(self.executor, self.db, self.run_id)) or []
         self.stage("drawdown", self.check_halt)
@@ -153,6 +174,11 @@ class _RunContext:
         self.summary["shadow"] = {"value": round(mark.get("shadow_value", 0.0), 4),
                                   "unmarked": mark.get("shadow_unmarked", 0)}
         self.stage("drawdown_final", self.check_halt)
+        if self.cfg.learning.enabled:
+            self.summary["proposal_tests"] = self.stage(
+                "proposal_tests", lambda: evaluation.test_proposals(self.db, self.e.cfg, self.now())) or []
+            self.summary["new_proposal"] = self.stage(
+                "proposals", lambda: evaluation.maybe_propose(self.db, self.e.cfg, self.now()))
         days = self.cfg.scanner.snapshot_retention_days
         self.summary["pruned_snapshots"] = self.stage(
             "maintenance", lambda: self.db.prune_snapshots(self.now() - timedelta(days=days)))
@@ -186,6 +212,90 @@ class _RunContext:
         if done:
             self.remark()
         return done
+
+    def _has_key(self) -> bool:
+        return bool((self.e.env or os.environ).get("ANTHROPIC_API_KEY"))
+
+    def _agent(self) -> ResearchAgent:
+        budget = AIBudget(self.db, self.cfg.budget, self.cfg.research)
+        return ResearchAgent(self.cfg, self.db, budget, self.e.claude_factory)
+
+    def postmortems(self) -> int:
+        lc = self.cfg.learning
+        if not (self.cfg.research.enabled and lc.llm_postmortems and self._has_key()):
+            learning.skip_postmortems(self.db)
+            return 0
+        budget = AIBudget(self.db, self.cfg.budget, self.cfg.research)
+        return learning.run_postmortems(self.cfg, self.db, budget, self.e.claude_factory,
+                                        self.now(), lc.max_postmortems_per_day)
+
+    def review_positions(self) -> list[dict]:
+        """Independent hold/sell decision for each research position, based on the
+        position's own thesis: hold while our probability for the side is meaningfully
+        above what we could sell for now (bid side, after fees); sell when the market
+        has reached our fair value or a fresh re-research weakened the thesis."""
+        lc = self.cfg.learning
+        out = []
+        reviews_left = lc.max_reviews_per_run
+        for pos in self.db.open_positions():
+            if pos["strategy"] != "research" or pos["shares"] <= 0:
+                continue
+            now = self.now()
+            f = self.db.q1("SELECT * FROM forecasts WHERE market_id=? AND research_status='OK' "
+                           "ORDER BY created_at DESC LIMIT 1", (pos["market_id"],))
+            if f is None:
+                continue
+            p_yes, source, fid = f["probability_yes"], "original", f["forecast_id"]
+            age_h = (now - parse_iso(f["created_at"])).total_seconds() / 3600
+            if (self.cfg.research.enabled and self._has_key() and reviews_left > 0
+                    and age_h >= lc.review_research_hours):
+                reviews_left -= 1
+                m = load_market(self.cfg, self.e.client, pos["market_id"], now)
+                if m is not None:
+                    agent = self._agent()
+                    r = agent.research(m, now, m.description, purpose="review",
+                                       track_record=learning.track_record_notes(
+                                           self.db, m.fee_category, lc.lessons_in_prompt))
+                    if r.status != "SKIPPED":
+                        rid = learning.record_forecast(
+                            self.db, now=now, purpose="review", market=m, model=self.cfg.research.model,
+                            prompt_version=self.cfg.research.prompt_version, research=r,
+                            decision="POSITION_REVIEW")
+                        if r.status == "OK":
+                            p_yes, source, fid = r.probability, "re-research", rid
+            p_side = p_yes if pos["outcome"] == "YES" else 1 - p_yes
+            orig = f["side_prob"] if f["side_prob"] is not None else p_side
+            sell_px = (pos["mark_value"] or 0.0) / pos["shares"] if pos["mark_value"] is not None else None
+            decision, reason = "HOLD", ""
+            if sell_px is None:
+                reason = "no current bid valuation; hold"
+            elif sell_px >= p_side - lc.fair_value_margin:
+                decision = "SELL"
+                reason = ("thesis_weakened" if source == "re-research" and p_side < orig - 1e-9
+                          else "fair_value")
+            else:
+                reason = (f"hold: our {source} probability {p_side:.2f} > sell value {sell_px:.3f} "
+                          f"+ margin {lc.fair_value_margin}")
+            self.db.conn.execute(
+                "INSERT INTO position_reviews(ts,run_id,position_id,market_id,side_prob,"
+                "sell_value_per_share,decision,reason,forecast_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                (iso(now), self.run_id, pos["position_id"], pos["market_id"], p_side, sell_px,
+                 decision, reason, fid))
+            item = {"position_id": pos["position_id"], "decision": decision, "reason": reason,
+                    "side_prob": round(p_side, 4), "sell_value_per_share": sell_px}
+            if decision == "SELL":
+                r = self.executor.place(
+                    run_id=self.run_id, signal_id=None, market_id=pos["market_id"],
+                    token_id=pos["token_id"], outcome=pos["outcome"], side="SELL",
+                    shares=pos["shares"], limit_price=0.0, signal_price=sell_px or 0.0,
+                    fee_rate=pos["fee_rate"] or 0.0,
+                    reason=f"{reason}: p_side {p_side:.2f} vs sell value {sell_px:.3f}",
+                    strategy="research", decision_at=now)
+                item.update(status=r.status, verification=r.verification, sold=r.shares)
+            out.append(item)
+        if any(i["decision"] == "SELL" for i in out):
+            self.remark()
+        return out
 
     def _signal(self, **kw) -> str:
         return self.db.insert_signal(run_id=self.run_id, now=self.now(), **kw)
@@ -239,13 +349,16 @@ class _RunContext:
         return out
 
     def run_research(self, markets: list[Market]) -> dict:
-        out = {"enabled": True, "researched": 0, "skipped": None, "signals": 0, "executed": 0}
-        if not (self.e.env or os.environ).get("ANTHROPIC_API_KEY"):
+        out = {"enabled": True, "researched": 0, "skipped": None, "signals": 0, "executed": 0,
+               "candidates": []}
+        if not self._has_key():
             raise RuntimeError("research.enabled is true but ANTHROPIC_API_KEY is not set")
-        budget = AIBudget(self.db, self.cfg.budget, self.cfg.research)
-        agent = ResearchAgent(self.cfg, self.db, budget, self.e.claude_factory)
-        for m in agent.select_candidates(markets, self.now()):
-            r = agent.research(m, self.now(), m.description)
+        agent = self._agent()
+        held = frozenset(p["market_id"] for p in self.db.open_positions())
+        for m in agent.select_candidates(markets, self.now(), exclude_markets=held):
+            out["candidates"].append({"market_id": m.market_id, "score": agent.score(m, self.now())})
+            r = agent.research(m, self.now(), m.description, track_record=learning.track_record_notes(
+                self.db, m.fee_category, self.cfg.learning.lessons_in_prompt))
             if r.status == "SKIPPED":
                 out["skipped"] = r.error
                 break
@@ -257,12 +370,18 @@ class _RunContext:
                        "summary": r.summary, "evidence": r.evidence,
                        "uncertainties": r.uncertainties, "research_cost_usd": r.cost_usd,
                        "vwap": sig.vwap, "limit_price": sig.limit_price, "shares": sig.shares,
-                       "fee_rate": m.fee_rate, "error": r.error}
+                       "fee_rate": m.fee_rate, "error": r.error,
+                       "prompt_version": self.cfg.research.prompt_version,
+                       "strategy_params_version": self.summary.get("strategy_params_version")}
+            fkw = dict(now=now, purpose="entry", market=m, model=self.cfg.research.model,
+                       prompt_version=self.cfg.research.prompt_version, research=r, signal=sig)
             if not sig.ok:
-                self._signal(kind="research", market_id=m.market_id, question=m.question,
-                             outcome=sig.outcome or "-", expected_net_usd=sig.expected_net_usd,
-                             edge=sig.edge, cost_usd=sig.cost_usd, status="REJECTED",
-                             reasons=sig.reasons, details=details)
+                sid = self._signal(kind="research", market_id=m.market_id, question=m.question,
+                                   outcome=sig.outcome or "-", expected_net_usd=sig.expected_net_usd,
+                                   edge=sig.edge, cost_usd=sig.cost_usd, status="REJECTED",
+                                   reasons=sig.reasons, details=details)
+                learning.record_forecast(self.db, decision="REJECTED", reasons=sig.reasons,
+                                         signal_id=sid, **fkw)
                 continue
             out["signals"] += 1
             book = m.yes_book if sig.outcome == "YES" else m.no_book
@@ -281,6 +400,8 @@ class _RunContext:
                                status="APPROVED" if decision.approved else "REJECTED",
                                reasons=decision.reasons, details=details)
             if not decision.approved:
+                learning.record_forecast(self.db, decision="REJECTED_BY_RISK",
+                                         reasons=decision.reasons, signal_id=sid, **fkw)
                 continue
             end = m.end_date.isoformat() if m.end_date else None
             fill = self.executor.place(
@@ -293,10 +414,15 @@ class _RunContext:
                                "strategy": "research", "fee_rate": m.fee_rate, "end_date": end,
                                "exit_conditions": exit_conditions("research", self.cfg.risk, end)},
             )
-            self.db.update_signal(sid, "EXECUTED" if fill.ok else
-                                  ("EXEC_UNVERIFIED" if fill.uncertain_shares > 0 else "EXEC_FAILED"),
-                                  [f"{fill.status}_{fill.verification}"])
+            status = "EXECUTED" if fill.ok else ("EXEC_UNVERIFIED" if fill.uncertain_shares > 0
+                                                 else "EXEC_FAILED")
+            self.db.update_signal(sid, status, [f"{fill.status}_{fill.verification}"])
+            fid = learning.record_forecast(self.db, decision=status,
+                                           reasons=[f"{fill.status}_{fill.verification}"],
+                                           signal_id=sid, **fkw)
             if fill.ok:
+                row = self.db.q1("SELECT position_id FROM orders WHERE order_id=?", (fill.order_id,))
+                learning.link_position(self.db, fid, row["position_id"] if row else None)
                 out["executed"] += 1
                 self.remark()
         return out

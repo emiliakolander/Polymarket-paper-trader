@@ -136,6 +136,38 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
     fees_total REAL NOT NULL, ai_cost_total REAL NOT NULL, unmarked_positions INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS forecasts (
+    forecast_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, purpose TEXT NOT NULL,
+    market_id TEXT NOT NULL, condition_id TEXT, question TEXT, category TEXT, end_date TEXT,
+    model TEXT, prompt_version TEXT, research_status TEXT,
+    probability_yes REAL, confidence REAL, summary TEXT, evidence_json TEXT,
+    side TEXT, side_prob REAL, all_in_price REAL, shares REAL, edge REAL,
+    decision TEXT, reasons_json TEXT, signal_id TEXT, position_id TEXT,
+    resolved_at TEXT, outcome_yes REAL, side_payout REAL, brier REAL, direction_correct INTEGER,
+    hypothetical_pnl REAL, hypothetical_return REAL, realized_pnl REAL,
+    mistake_tags_json TEXT, review_text TEXT, llm_postmortem TEXT, lesson TEXT,
+    postmortem_status TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_forecasts_market ON forecasts(market_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_forecasts_resolved ON forecasts(resolved_at);
+
+CREATE TABLE IF NOT EXISTS position_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, run_id TEXT,
+    position_id TEXT NOT NULL, market_id TEXT, side_prob REAL, sell_value_per_share REAL,
+    decision TEXT NOT NULL, reason TEXT, forecast_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS proposals (
+    proposal_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, status TEXT NOT NULL,
+    params_json TEXT NOT NULL, baseline_json TEXT NOT NULL, rationale TEXT,
+    train_json TEXT, test_json TEXT, decided_at TEXT, decision_note TEXT
+);
+
+CREATE TABLE IF NOT EXISTS strategy_params (
+    version INTEGER PRIMARY KEY AUTOINCREMENT, applied_at TEXT NOT NULL,
+    params_json TEXT NOT NULL, proposal_id TEXT, note TEXT
+);
+
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, run_id TEXT,
     level TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL
@@ -570,10 +602,14 @@ class Database:
                       (iso(start), iso(end)))
         return float(row["s"])
 
-    def ai_calls_between(self, start: datetime, end: datetime) -> int:
-        row = self.q1("SELECT COUNT(*) c FROM api_costs WHERE ts>=? AND ts<? AND provider='anthropic'",
-                      (iso(start), iso(end)))
-        return int(row["c"])
+    def ai_calls_between(self, start: datetime, end: datetime,
+                         purposes: Optional[tuple] = None) -> int:
+        sql = "SELECT COUNT(*) c FROM api_costs WHERE ts>=? AND ts<? AND provider='anthropic'"
+        params: list = [iso(start), iso(end)]
+        if purposes:
+            sql += f" AND purpose IN ({','.join('?' * len(purposes))})"
+            params += list(purposes)
+        return int(self.q1(sql, tuple(params))["c"])
 
     def ai_spend_total(self) -> float:
         return float(self.q1("SELECT COALESCE(SUM(cost_usd),0) s FROM api_costs")["s"])

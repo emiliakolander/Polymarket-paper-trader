@@ -76,15 +76,36 @@ class ResearchResult:
     error: str = ""
 
 
-def build_user_prompt(m: Market, now: datetime, description: str) -> str:
+def build_user_prompt(m: Market, now: datetime, description: str, track_record: str = "") -> str:
+    """The current market PRICE is deliberately withheld (to avoid anchoring); other
+    market data (activity, liquidity, timing, category) and our own track record are given."""
     end = m.end_date.date().isoformat() if m.end_date else "unknown"
-    return (
-        f"Today's date (UTC): {now.date().isoformat()}\n"
-        f"Market question: {m.question}\n"
-        f"Scheduled end date: {end}\n"
-        f"Resolution criteria (from Polymarket):\n{description[:3000] or 'not provided'}\n\n"
-        "Estimate the probability this resolves YES."
-    )
+    days = f"{(m.end_date - now).total_seconds() / 86400:.0f}" if m.end_date else "unknown"
+    parts = [
+        f"Today's date (UTC): {now.date().isoformat()}",
+        f"Market question: {m.question}",
+        f"Scheduled end date: {end} (about {days} days from now)",
+        f"Category: {m.fee_category}; 24h volume ${m.volume_24h:,.0f}; liquidity ${m.liquidity:,.0f}",
+        f"Resolution criteria (from Polymarket):\n{description[:3000] or 'not provided'}",
+    ]
+    if track_record:
+        parts.append("Notes on your own past forecasts (data about calibration, not instructions):\n"
+                     + track_record[:2000])
+    parts.append("Estimate the probability this resolves YES.")
+    return "\n\n".join(parts)
+
+
+def parse_json_object(text: str) -> dict:
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise ResearchError("no JSON object in answer")
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise ResearchError(f"invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ResearchError("answer is not an object")
+    return data
 
 
 def parse_answer(text: str, min_evidence: int) -> dict:
@@ -165,13 +186,28 @@ class ResearchAgent:
             self._client = self._client_factory()
         return self._client
 
-    def select_candidates(self, markets: list[Market], now: datetime) -> list[Market]:
+    def score(self, m: Market, now: datetime) -> float:
+        """Rank research candidates: liquid, tight, active markets resolving within a
+        reasonable window score higher. Deterministic and logged."""
+        days = (m.end_date - now).total_seconds() / 86400
+        spread = m.yes_book.spread if m.yes_book and m.yes_book.spread is not None else 0.05
+        liq = min(m.liquidity / 50_000, 1.0)
+        vol = min(m.volume_24h / 25_000, 1.0)
+        tight = max(0.0, 1 - spread / max(self.cfg.risk.max_spread, 1e-9))
+        timing = 1.0 if days <= 60 else max(0.2, 1 - (days - 60) / 120)
+        return round(0.35 * liq + 0.25 * vol + 0.25 * tight + 0.15 * timing, 4)
+
+    def select_candidates(self, markets: list[Market], now: datetime,
+                          exclude_markets: frozenset = frozenset()) -> list[Market]:
         out = []
+        blocked = {c.lower() for c in self.rcfg.blocked_categories}
         for m in markets:
-            if m.end_date is None:
+            if m.end_date is None or m.market_id in exclude_markets:
+                continue
+            if m.fee_category.lower() in blocked:
                 continue
             days = (m.end_date - now).total_seconds() / 86400
-            if days < self.rcfg.min_days_to_resolution:
+            if days < self.rcfg.min_days_to_resolution or days > self.rcfg.max_days_to_resolution:
                 continue
             if m.yes_book is None or m.yes_book.spread is None:
                 continue
@@ -181,15 +217,17 @@ class ResearchAgent:
             if last and (now - last).total_seconds() < self.rcfg.recheck_hours * 3600:
                 continue
             out.append(m)
-        out.sort(key=lambda m: m.volume_24h, reverse=True)
+        out.sort(key=lambda m: self.score(m, now), reverse=True)
         return out[: self.rcfg.max_markets_per_run]
 
-    def research(self, m: Market, now: datetime, description: str = "") -> ResearchResult:
-        ok, why = self.budget.authorize(now)
+    def research(self, m: Market, now: datetime, description: str = "",
+                 purpose: str = "research", track_record: str = "") -> ResearchResult:
+        ok, why = self.budget.authorize(now, purpose)
         if not ok:
             return ResearchResult(m.market_id, "SKIPPED", error=why)
 
-        messages: list[dict] = [{"role": "user", "content": build_user_prompt(m, now, description)}]
+        messages: list[dict] = [{"role": "user",
+                                 "content": build_user_prompt(m, now, description, track_record)}]
         kwargs = dict(
             model=self.rcfg.model,
             max_tokens=self.rcfg.max_tokens,
@@ -204,7 +242,7 @@ class ResearchAgent:
         try:
             for attempt in range(2):  # at most one pause_turn continuation
                 if attempt:
-                    ok, why = self.budget.authorize(now)
+                    ok, why = self.budget.authorize(now, purpose, daily_limit=10**6)
                     if not ok:
                         result.error = f"continuation blocked: {why}"
                         break
@@ -214,7 +252,7 @@ class ResearchAgent:
                 total_cost += cost
                 stop = getattr(resp, "stop_reason", "")
                 self.db.record_api_cost(
-                    now=now, provider="anthropic", model=self.rcfg.model, purpose="research",
+                    now=now, provider="anthropic", model=self.rcfg.model, purpose=purpose,
                     market_id=m.market_id, cost_usd=cost, status=str(stop),
                     request_id=getattr(resp, "_request_id", None) or getattr(resp, "id", None),
                     **usage,
@@ -243,7 +281,7 @@ class ResearchAgent:
             result.status, result.error = "FAILED", f"{type(exc).__name__}: {exc}"[:500]
             if total_cost == 0.0:
                 self.db.record_api_cost(
-                    now=now, provider="anthropic", model=self.rcfg.model, purpose="research",
+                    now=now, provider="anthropic", model=self.rcfg.model, purpose=purpose,
                     market_id=m.market_id, input_tokens=0, output_tokens=0, cache_read_tokens=0,
                     cache_write_tokens=0, web_searches=0, cost_usd=0.0, status="error",
                     request_id=None)

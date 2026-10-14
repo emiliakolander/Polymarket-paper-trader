@@ -16,13 +16,16 @@ import json
 import sys
 import time
 
-from paperbot.config import load_config
 from datetime import date, datetime, timedelta, timezone
 
+from paperbot import alerts
+from paperbot.config import load_config
 from paperbot.daily import write_daily
 from paperbot.dashboard import write_dashboard
 from paperbot.db import Database
 from paperbot.engine import Engine
+from paperbot.evaluation import write_evaluation
+from paperbot.polymarket import PolymarketClient
 from paperbot.report import as_text_summary, compute_metrics, write_report
 from paperbot.safety import SafetyError, startup_checks
 
@@ -35,10 +38,19 @@ def _outputs(cfg, args) -> None:
             today = datetime.now(timezone.utc).date()
             for day in (today - timedelta(days=1), today):   # yesterday is finalised after midnight
                 write_daily(db, args.report_dir, day, cfg.budget.infra_cost_usd_per_month)
+            write_evaluation(db, cfg, args.report_dir)
         if getattr(args, "site_dir", None):
             write_dashboard(db, args.site_dir, cfg.budget.monthly_ai_cap_usd)
     finally:
         db.close()
+
+
+def _engine(cfg, args) -> Engine:
+    if getattr(args, "mock_market_data", False):
+        from paperbot.fixtures import MockSession
+        client = PolymarketClient(cfg.api, session=MockSession())
+        return Engine(cfg, client=client, data_source="MOCK")
+    return Engine(cfg, data_source="LIVE")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,9 +64,11 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--site-dir")
         p.add_argument("--enable-research", action="store_true",
                        help="turn on the PAID Claude research agent for this process")
+        p.add_argument("--mock-market-data", action="store_true",
+                       help="use deterministic MOCK markets (pipeline tests only; DB labelled MOCK)")
         if name == "loop":
             p.add_argument("--interval", type=int, default=300)
-    for name in ("report", "dashboard"):
+    for name in ("report", "dashboard", "evaluate"):
         sub.add_parser(name).add_argument("--out", required=True)
     dp = sub.add_parser("daily-report")
     dp.add_argument("--out", required=True)
@@ -77,13 +91,24 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.cmd == "run":
-        summary = Engine(cfg).run_once()
+        summary = _engine(cfg, args).run_once()
         _outputs(cfg, args)
-        print(json.dumps({k: summary.get(k) for k in ("run_id", "status", "equity", "errors")},
-                         default=str, indent=2))
+        now = datetime.now(timezone.utc)
+        db = Database(cfg.database_path)
+        try:
+            active = alerts.evaluate_alerts(db, summary, now)
+        finally:
+            db.close()
+        if args.report_dir:
+            alerts.write_alerts(active, args.report_dir, now)
+        print(json.dumps({k: summary.get(k) for k in ("run_id", "status", "equity", "errors")}
+                         | {"alerts": active}, default=str, indent=2))
+        if alerts.needs_attention(active):
+            print("ATTENTION NEEDED: see ALERTS.md", file=sys.stderr)
+            return 3
         return 0 if summary["status"] in ("OK", "DEGRADED", "SKIPPED_LOCKED") else 1
     if args.cmd == "loop":
-        engine = Engine(cfg)
+        engine = _engine(cfg, args)
         while True:
             summary = engine.run_once()
             _outputs(cfg, args)
@@ -96,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "daily-report":
             day = date.fromisoformat(args.date) if args.date else datetime.now(timezone.utc).date()
             print(write_daily(db, args.out, day, cfg.budget.infra_cost_usd_per_month))
+        elif args.cmd == "evaluate":
+            print(write_evaluation(db, cfg, args.out))
         elif args.cmd == "dashboard":
             print(write_dashboard(db, args.out, cfg.budget.monthly_ai_cap_usd))
         elif args.cmd == "status":

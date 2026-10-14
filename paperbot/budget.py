@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Optional
 
 from paperbot.config import BudgetConfig, ResearchConfig
 from paperbot.db import Database
@@ -85,12 +86,24 @@ class AIBudget:
             worst_case_call_usd=self.worst_case_call(),
         )
 
-    def authorize(self, now: datetime) -> tuple[bool, str]:
+    # research + position re-research share one daily allowance; post-mortems have their own.
+    RESEARCH_PURPOSES = ("research", "review")
+
+    def authorize(self, now: datetime, purpose: str = "research",
+                  daily_limit: Optional[int] = None,
+                  worst_case_usd: Optional[float] = None) -> tuple[bool, str]:
         st = self.status(now)
-        if st.exhausted:
+        worst = st.worst_case_call_usd if worst_case_usd is None else worst_case_usd
+        if st.spent_month_usd + worst > st.cap_usd:
             return False, (f"AI_BUDGET_EXHAUSTED: spent ${st.spent_month_usd:.2f} of "
-                           f"${st.cap_usd:.2f}; next call could cost up to "
-                           f"${st.worst_case_call_usd:.2f}")
-        if st.calls_today >= self.research.max_calls_per_day:
+                           f"${st.cap_usd:.2f}; next call could cost up to ${worst:.2f}")
+        ds, de = day_bounds(now)
+        if purpose in self.RESEARCH_PURPOSES:
+            used = self.db.ai_calls_between(ds, de, self.RESEARCH_PURPOSES)
+            limit = self.research.max_calls_per_day if daily_limit is None else daily_limit
+        else:
+            used = self.db.ai_calls_between(ds, de, (purpose,))
+            limit = daily_limit if daily_limit is not None else 0
+        if used >= limit:
             return False, "AI_DAILY_CALL_LIMIT"
         return True, ""

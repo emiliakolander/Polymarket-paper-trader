@@ -75,6 +75,9 @@ class ResearchConfig:
     kelly_fraction: float = 0.25
     target_order_usd: float = 3.0
     min_evidence_items: int = 2
+    max_days_to_resolution: float = 120
+    prompt_version: str = "v2-trackrecord"
+    blocked_categories: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,27 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True)
+class LearningConfig:
+    enabled: bool = True
+    llm_postmortems: bool = True          # only used when research is enabled (paid)
+    max_postmortems_per_day: int = 2
+    resolve_checks_per_run: int = 20
+    lessons_in_prompt: int = 5
+    proposal_interval_days: float = 7
+    min_train_samples: int = 15
+    min_test_samples: int = 20
+    max_test_samples: int = 80
+    improvement_margin: float = 0.02      # per $1 staked, out-of-sample
+    auto_apply: bool = True               # bounded strategy filters only, never risk limits
+    min_edge_bounds: tuple = (0.03, 0.20)
+    min_confidence_bounds: tuple = (0.50, 0.90)
+    # Position reviews
+    fair_value_margin: float = 0.01       # sell when bid-after-fees >= our probability - margin
+    review_research_hours: float = 72     # re-research held positions this often (paid)
+    max_reviews_per_run: int = 1
+
+
+@dataclass(frozen=True)
 class Config:
     starting_capital_usd: float = 1000.0
     database_path: str = "data/paperbot.sqlite"
@@ -133,6 +157,7 @@ class Config:
     budget: BudgetConfig = field(default_factory=BudgetConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
 
 
 _SECTIONS = {
@@ -144,6 +169,7 @@ _SECTIONS = {
     "budget": BudgetConfig,
     "risk": RiskConfig,
     "execution": ExecutionConfig,
+    "learning": LearningConfig,
 }
 
 # Fractions that must lie in [0, 1].
@@ -165,8 +191,10 @@ def _build(cls: type, data: dict, section: str) -> Any:
     if unknown:
         raise ConfigError(f"Unknown key(s) in '{section}': {sorted(unknown)}")
     kwargs = dict(data)
-    if cls is BudgetConfig and "unknown_model_pricing" in kwargs:
-        kwargs["unknown_model_pricing"] = tuple(kwargs["unknown_model_pricing"])
+    for key in ("unknown_model_pricing", "min_edge_bounds", "min_confidence_bounds",
+                "blocked_categories"):
+        if key in kwargs and isinstance(kwargs[key], list):
+            kwargs[key] = tuple(kwargs[key])
     return cls(**kwargs)
 
 
@@ -184,6 +212,10 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("execution.verify_samples must be >= 1 (fills must be verified)")
     if not (0 <= cfg.execution.share_decimals <= 6):
         raise ConfigError("execution.share_decimals must be between 0 and 6")
+    for name in ("min_edge_bounds", "min_confidence_bounds"):
+        lo, hi = getattr(cfg.learning, name)
+        if not (0 <= lo <= hi <= 1):
+            raise ConfigError(f"learning.{name} must be 0 <= low <= high <= 1")
     if cfg.budget.monthly_ai_cap_usd < 0:
         raise ConfigError("budget.monthly_ai_cap_usd must be >= 0")
     for url in (cfg.api.gamma_base, cfg.api.clob_base):

@@ -62,13 +62,16 @@ research:
   max_tokens: 4000
   max_web_searches: 3                 # per market analysed
   min_days_to_resolution: 7           # only slower-moving markets
-  max_markets_per_run: 1
+  max_markets_per_run: 2
   max_calls_per_day: 2
   recheck_hours: 72                   # don't re-research a market sooner
   min_edge: 0.05                      # p_model - executable price, after fees
   min_confidence: 0.6
   kelly_fraction: 0.25                # cap: never more than this fraction of Kelly
   target_order_usd: 3.0               # intended size; REJECTED (not upsized) if below market minimums
+  max_days_to_resolution: 120         # don't lock capital in very long markets
+  prompt_version: "v2-trackrecord"    # recorded with every forecast for method comparison
+  blocked_categories: []              # may be extended by validated learning proposals
   min_evidence_items: 2
 
 budget:
@@ -114,3 +117,21 @@ execution:
   min_marketable_notional_usd: 1.0    # marketable orders below $1 are treated as invalid
   share_decimals: 2                   # order sizes rounded DOWN to 0.01 shares
   default_tick_size: 0.01             # used only if neither book nor Gamma gives a tick size
+
+learning:
+  enabled: true
+  llm_postmortems: true               # explain mistakes with Claude; only if research is enabled
+  max_postmortems_per_day: 2
+  resolve_checks_per_run: 20          # markets checked for resolution per run (free API)
+  lessons_in_prompt: 5                # past lessons shown to the research agent
+  proposal_interval_days: 7           # how often improvement proposals are generated
+  min_train_samples: 15               # resolved forecasts needed before proposing anything
+  min_test_samples: 20                # NEW resolved forecasts needed before applying a proposal
+  max_test_samples: 80                # give up on a proposal after this many without passing
+  improvement_margin: 0.02            # required out-of-sample gain per $1 staked
+  auto_apply: true                    # only bounded strategy filters below; never risk limits
+  min_edge_bounds: [0.03, 0.20]
+  min_confidence_bounds: [0.50, 0.90]
+  fair_value_margin: 0.01             # sell when bid-after-fees >= our probability - margin
+  review_research_hours: 72           # re-research held positions this often (paid, budgeted)
+  max_reviews_per_run: 1

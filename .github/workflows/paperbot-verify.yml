@@ -1,0 +1,118 @@
+# Verification before activation (no paid services, no secrets, no trading):
+#  - live-check: read-only connectivity test against the REAL public Polymarket APIs
+#  - mock-run-1 -> mock-run-2: two independent runners on MOCK market data (exercises
+#    trades/positions), state carried between them on branch paperbot-verify-mock
+#  - live-run-1 -> live-run-2: the same on LIVE public market data, branch paperbot-verify-live
+# Each run-2 job verifies that the $1,000 portfolio, positions and full decision history
+# written by run-1 on a DIFFERENT machine were restored intact and only appended to.
+name: paperbot-verify
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["paperbot/**", "config/paperbot.yaml", "scripts/paperbot_state.sh",
+            "requirements-paperbot.txt", ".github/workflows/paperbot-verify.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # only to push the paperbot-verify-* state branches
+
+concurrency:
+  group: paperbot-verify
+  cancel-in-progress: false
+
+env:
+  PAPER_MODE: "true"
+
+jobs:
+  live-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+      - name: LIVE connectivity check (read-only)
+        run: python -m paperbot.live_check --out out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-check
+          path: out/
+
+  run-1:
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [mock, live]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+      - name: Fresh state branch
+        run: |
+          scripts/paperbot_state.sh reset paperbot-verify-${{ matrix.source }}
+          scripts/paperbot_state.sh restore paperbot-verify-${{ matrix.source }} state
+      - name: Run 1 (${{ matrix.source }} market data)
+        run: |
+          python -m paperbot --db state/paperbot.sqlite run \
+            --report-dir state/report --site-dir state/site \
+            ${{ matrix.source == 'mock' && '--mock-market-data' || '' }}
+          python -m paperbot.persistence_check manifest --db state/paperbot.sqlite \
+            --out state/manifest-run1.json
+          echo "runner: $RUNNER_NAME ($(hostname))" > state/run1-runner.txt
+      - name: Save state
+        run: scripts/paperbot_state.sh save paperbot-verify-${{ matrix.source }} state
+
+  run-2:
+    needs: run-1
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [mock, live]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+      - name: Restore state written by run 1 on another runner
+        run: |
+          scripts/paperbot_state.sh restore paperbot-verify-${{ matrix.source }} state
+          test -f state/paperbot.sqlite
+          echo "run 1 was on: $(cat state/run1-runner.txt); run 2 is on: $RUNNER_NAME ($(hostname))"
+      - name: Run 2 (${{ matrix.source }} market data)
+        run: |
+          python -m paperbot --db state/paperbot.sqlite run \
+            --report-dir state/report --site-dir state/site \
+            ${{ matrix.source == 'mock' && '--mock-market-data' || '' }}
+      - name: Verify persistence across runs
+        run: |
+          python -m paperbot.persistence_check verify --db state/paperbot.sqlite \
+            --before state/manifest-run1.json --label "${{ matrix.source }}" \
+            --report state/persistence-check.md
+          python -m paperbot --db state/paperbot.sqlite status
+      - name: Save state
+        if: always()
+        run: scripts/paperbot_state.sh save paperbot-verify-${{ matrix.source }} state
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-${{ matrix.source }}
+          path: |
+            state/persistence-check.md
+            state/report/
+            state/site/

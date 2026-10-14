@@ -44,15 +44,7 @@ jobs:
           pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
 
       - name: Restore state from paperbot-data branch
-        run: |
-          if git ls-remote --exit-code --heads origin paperbot-data >/dev/null; then
-            git fetch --depth=1 origin paperbot-data
-            git worktree add --detach state FETCH_HEAD
-          else
-            git worktree add --detach state HEAD
-            git -C state rm -rf --quiet .
-          fi
-          mkdir -p state
+        run: scripts/paperbot_state.sh restore paperbot-data state
 
       - name: Run one paper-trading cycle
         env:
@@ -64,15 +56,7 @@ jobs:
 
       - name: Save state to paperbot-data branch
         if: always()
-        run: |
-          cd state
-          printf '*-wal\n*-shm\n' > .gitignore
-          git config user.name "paperbot"
-          git config user.email "paperbot@users.noreply.github.com"
-          git checkout --orphan paperbot-data-tmp
-          git add -A
-          git commit --quiet -m "paperbot state $(date -u +%Y-%m-%dT%H:%MZ)" || exit 0
-          git push --force origin HEAD:paperbot-data
+        run: scripts/paperbot_state.sh save paperbot-data state
 
       - name: Upload dashboard + report
         if: always()
