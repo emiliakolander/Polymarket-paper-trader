@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-13",
+  "generated_at": "2026-10-14T17:37:04.957002+00:00",
+  "disclaimer": "PAPER TRADING SIMULATION with virtual money. No real funds, wallets or orders are involved. Simulated fills are approximations of what might have happened. No strategy here is risk-free, and simulated results do not predict real results.",
+  "hypothetical_opportunities": {
+    "count": 0,
+    "by_status": {},
+    "items": []
+  },
+  "simulated_executions": {
+    "summary": {
+      "orders": 0,
+      "by_status": {},
+      "by_verification": {},
+      "confirmed_notional": 0,
+      "fees": 0,
+      "uncertain_notional": 0,
+      "slippage_vs_signal_usd": 0
+    },
+    "decisions": []
+  },
+  "completed_positions": [],
+  "unresolved_positions": [],
+  "unverified_shadow": {
+    "open": [],
+    "completed": []
+  },
+  "net_performance": {
+    "starting_capital": 1000.0,
+    "equity_start_of_day": 1000.0,
+    "equity_end_of_day": 1000.0,
+    "trading_pnl_day": 0.0,
+    "trading_fees_day": -0.0,
+    "realized_pnl_on_trades_closed_today": 0,
+    "unrealized_pnl_end_of_day": 0,
+    "ai_cost_day": 0.0,
+    "infra_cost_day": 0.0,
+    "net_after_all_costs_day": 0.0,
+    "net_after_all_costs_cumulative": 0.0,
+    "ai_cost_cumulative": 0.0,
+    "infra_cost_cumulative": 0.0,
+    "shadow_unverified_mtm_end_of_day": 0,
+    "shadow_realized_today": 0
+  }
+}

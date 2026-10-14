@@ -1,0 +1,21 @@
+{
+  "data_source": "LIVE",
+  "starting_capital": 1000.0,
+  "deposits": 1,
+  "cash": 1000.0,
+  "ledger_max_id": 1,
+  "ledger_digest": "8dd33b41e25ef7e9efd4082154d5e23be08e398e2374cf972fc8666c249ca806",
+  "runs": [
+    "625963d62a6f4d36afaa478d6dbd9372"
+  ],
+  "orders": {},
+  "positions": {},
+  "counts": {
+    "signals": 0,
+    "forecasts": 0,
+    "equity_snapshots": 1,
+    "position_marks": 0,
+    "market_snapshots": 60,
+    "events": 0
+  }
+}

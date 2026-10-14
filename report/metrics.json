@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-10-14T17:37:04.954429+00:00",
+  "starting_capital": 1000.0,
+  "equity": 1000.0,
+  "cash": 1000.0,
+  "positions_value": 0.0,
+  "net_pnl": 0.0,
+  "net_pnl_pct": 0.0,
+  "net_pnl_after_ai_costs": 0.0,
+  "realized_pnl": 0.0,
+  "unrealized_pnl": 0.0,
+  "fees_paid": -0.0,
+  "slippage_vs_signal_usd": 0.0,
+  "ai_cost_month": 0.0,
+  "ai_cost_total": 0.0,
+  "ai_cap": 10.0,
+  "max_drawdown": 0.0,
+  "current_drawdown": 0.0,
+  "closed_trades": 0,
+  "wins": 0,
+  "win_rate": null,
+  "open_positions": 0,
+  "unmarked_positions": 0,
+  "orders": {},
+  "verification": {},
+  "shadow_open_positions": 0,
+  "shadow_cost": 0.0,
+  "shadow_value": 0.0,
+  "signals": {},
+  "reject_reasons": {},
+  "runs": {
+    "OK": 2
+  },
+  "last_run": {
+    "run_id": "916b9762d5794dbb8eed49bc05d630b5",
+    "started_at": "2026-10-14T17:37:02.944750+00:00",
+    "finished_at": "2026-10-14T17:37:04.944033+00:00",
+    "status": "OK",
+    "errors_json": "[]",
+    "api_stats_json": "{\"requests\": 6, \"errors\": 0, \"rate_limited\": 0, \"retries\": 0}",
+    "summary_json": "{\"run_id\": \"916b9762d5794dbb8eed49bc05d630b5\", \"crashed_runs_repaired\": 0, \"interrupted_orders_repaired\": 0, \"strategy_params_version\": 0, \"settled\": [], \"forecasts_resolved\": 0, \"postmortems\": 0, \"exits\": [], \"position_reviews\": [], \"unhedged_repair\": [], \"scan\": {\"considered\": 400, \"with_books\": 60, \"rejected\": {\"PAST_END_DATE\": 24, \"NOT_YES_NO\": 102, \"LOW_LIQUIDITY_OR_VOLUME\": 2}, \"book_errors\": 0}, \"arbitrage\": {\"evaluated\": 60, \"near_misses\": 0, \"approved\": 0, \"rejected\": 0, \"executed\": {}}, \"research\": {\"enabled\": false}, \"equity\": {\"cash\": 1000.0, \"positions_value\": 0.0, \"equity\": 1000.0, \"peak_equity\": 1000.0, \"drawdown\": 0.0, \"realized_pnl\": 0.0, \"unrealized_pnl\": 0.0, \"fees_total\": -0.0, \"ai_cost_total\": 0.0, \"unmarked_positions\": 0}, \"shadow\": {\"value\": 0.0, \"unmarked\": 0}, \"proposal_tests\": [], \"new_proposal\": null, \"pruned_snapshots\": 0, \"status\": \"OK\"}"
+  },
+  "last_ok_run": "2026-10-14T17:37:02.944750+00:00",
+  "errors_24h": 0,
+  "api_stats_last_run": {
+    "requests": 6,
+    "errors": 0,
+    "rate_limited": 0,
+    "retries": 0
+  },
+  "health": "GOOD",
+  "halted": false
+}
