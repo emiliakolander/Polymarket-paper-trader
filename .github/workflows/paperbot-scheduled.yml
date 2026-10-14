@@ -40,7 +40,8 @@ jobs:
           python-version: "3.12"
 
       - name: Install pinned dependencies (hash-checked, wheels only)
-        run: pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+        run: |
+          pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
 
       - name: Restore state from paperbot-data branch
         run: |

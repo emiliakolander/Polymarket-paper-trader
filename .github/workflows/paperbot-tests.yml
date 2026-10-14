@@ -26,6 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install pinned dependencies (hash-checked, wheels only)
-        run: pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
+        run: |
+          pip install --require-hashes --only-binary=:all: -r requirements-paperbot.txt
       - name: Run tests (no network, no API keys)
         run: python -m pytest -c pytest-paperbot.ini
