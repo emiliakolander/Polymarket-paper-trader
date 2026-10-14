@@ -9,6 +9,8 @@ Endpoints used (docs.polymarket.com):
   GET  gamma-api /markets/{id}     one market (used for settlement)
   GET  clob      /book?token_id=   full order book for one outcome token
   POST clob      /books            order books for many tokens (read-only, body = token ids)
+  GET  gamma-api /events           events with category tags (read-only)
+  GET  clob      /fee-rate?token_id= public taker fee rate for a token (read-only)
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ class ForbiddenEndpoint(RuntimeError):
 _ALLOWED: list[tuple[str, str, re.Pattern]] = [
     ("GET", "gamma", re.compile(r"^/markets$")),
     ("GET", "gamma", re.compile(r"^/markets/[0-9]+$")),
+    ("GET", "gamma", re.compile(r"^/events$")),
+    ("GET", "clob", re.compile(r"^/fee-rate$")),
     ("GET", "clob", re.compile(r"^/book$")),
     ("POST", "clob", re.compile(r"^/books$")),
 ]
@@ -144,7 +148,8 @@ class PolymarketClient:
         data = self._request(
             "GET", "gamma", "/markets",
             params={"active": "true", "closed": "false", "order": "volume24hr",
-                    "ascending": "false", "limit": limit, "offset": offset},
+                    "ascending": "false", "limit": limit, "offset": offset,
+                    "include_tag": "true"},
         )
         if not isinstance(data, list):
             raise ApiError("Gamma /markets did not return a list")
@@ -157,6 +162,17 @@ class PolymarketClient:
         if not isinstance(data, dict):
             raise ApiError("Gamma /markets/{id} did not return an object")
         return data
+
+    def list_events(self, *, limit: int, offset: int = 0) -> list[dict]:
+        data = self._request("GET", "gamma", "/events",
+                             params={"active": "true", "closed": "false", "order": "volume24hr",
+                                     "ascending": "false", "limit": limit, "offset": offset})
+        if not isinstance(data, list):
+            raise ApiError("Gamma /events did not return a list")
+        return [e for e in data if isinstance(e, dict)]
+
+    def get_fee_rate(self, token_id: str):
+        return self._request("GET", "clob", "/fee-rate", params={"token_id": token_id})
 
     def get_book(self, token_id: str) -> dict:
         data = self._request("GET", "clob", "/book", params={"token_id": token_id})

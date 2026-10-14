@@ -28,6 +28,7 @@ def run_check(client: PolymarketClient, cfg, now: datetime) -> dict:
     report = {"label": "LIVE MARKET DATA", "checked_at": now.isoformat(), "steps": [], "ok": True}
 
     def step(name, fn):
+        diagnostic = "diagnostic" in name
         t0 = time.monotonic()
         try:
             detail = fn()
@@ -35,7 +36,8 @@ def run_check(client: PolymarketClient, cfg, now: datetime) -> dict:
                                     "detail": detail})
             return detail
         except (ApiError, BookError, KeyError, ValueError, TypeError) as exc:
-            report["ok"] = False
+            if not diagnostic:
+                report["ok"] = False
             report["steps"].append({"step": name, "ok": False, "ms": round((time.monotonic() - t0) * 1000),
                                     "error": f"{type(exc).__name__}: {exc}"})
             return None
@@ -86,6 +88,29 @@ def run_check(client: PolymarketClient, cfg, now: datetime) -> dict:
             "levels": [len(b.bids), len(b.asks)], "hash": b.book_hash}
             if (b := parse_book(client.get_book(tok), tok, fetched_at=now)) else None)
         step("GET gamma /markets/{id}", lambda: {"id": client.get_market(sample[0].market_id).get("id")})
+    # ---- diagnostics: which fields carry category / fee information in LIVE data
+    keys: dict[str, int] = {}
+    for r in raws:
+        for k in r:
+            keys[k] = keys.get(k, 0) + 1
+    interesting = sorted(k for k in keys if any(w in k.lower() for w in ("categ", "tag", "fee", "event")))
+    report["diagnostics"] = {
+        "market_keys": sorted(keys),
+        "category_fee_keys": {k: keys[k] for k in interesting},
+        "sample_category_fee_values": [{k: (r.get(k) if not isinstance(r.get(k), list) else
+                                            [(x.get("label") or x.get("slug") or x.get("title"))
+                                             if isinstance(x, dict) else x for x in r.get(k)][:6])
+                                        for k in interesting} for r in raws[:3]],
+    }
+    ev = step("GET gamma /events (5, diagnostic)", lambda: client.list_events(limit=5))
+    if ev:
+        report["diagnostics"]["events_sample"] = [
+            {"title": e.get("title"), "category": e.get("category"),
+             "tags": [t.get("label") for t in (e.get("tags") or []) if isinstance(t, dict)][:8],
+             "n_markets": len(e.get("markets") or []),
+             "market_ids": [m.get("id") for m in (e.get("markets") or [])][:3]} for e in ev]
+    if sample:
+        step("GET clob /fee-rate (diagnostic)", lambda: client.get_fee_rate(sample[0].yes_token))
     report["api_stats"] = client.stats.as_dict()
     return report
 
@@ -99,6 +124,8 @@ def render(r: dict) -> str:
                      f"{json.dumps(s.get('detail') if s['ok'] else s.get('error'), default=str)[:160]} |")
     if r.get("markets"):
         lines += ["", f"Markets: {r['markets']}"]
+    if r.get("diagnostics"):
+        lines += ["", "DIAGNOSTICS " + json.dumps(r["diagnostics"], default=str)[:6000]]
     for b in r.get("books", []):
         lines.append(f"- {json.dumps(b, default=str)}")
     return "\n".join(lines) + "\n"

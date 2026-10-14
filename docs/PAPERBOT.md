@@ -1,16 +1,24 @@
-# paperbot — Polymarket research & paper-trading system
+# paperbot — autonomous AI research-driven Polymarket paper trader
 
 **Paper trading only.** It starts with $1,000 of virtual money. There are no wallets,
 private keys or order routes. It reads only public market data.
+
+**Primary strategy:** Claude researches markets, forms an independent probability with cited
+evidence, and the bot decides YES/NO/skip against executable prices, makes ~$3 virtual trades,
+reviews each position against its original thesis, scores every forecast against the actual
+outcome, explains mistakes, and tests improvements on new data before adopting them.
+**Secondary strategy:** the YES/NO arbitrage scanner.
 
 ## What it does every cycle
 
 ```
 safety checks → run lock → crash repair → settle resolved markets (MAIN + SHADOW)
- → value positions at real bids → exit conditions → repair unhedged arbitrage legs
+ → score resolved forecasts → post-mortems (optional, paid) → value positions at real bids
+ → exit conditions → thesis-based position reviews → repair unhedged arbitrage legs
  → scan markets + order books
  → YES/NO arbitrage scan → (optional, paid) Claude research → risk engine
- → verified paper execution → equity snapshot → report, daily report, dashboard
+ → verified paper execution → equity snapshot → test/propose strategy improvements
+ → report, daily report, evaluation report, dashboard, alerts
 ```
 
 | Component | File | Notes |
@@ -104,6 +112,68 @@ Written for today and yesterday on every run, or on demand with
 5. **Net performance after all costs**: equity change (includes fees and slippage) minus
    AI API costs and infrastructure costs, for the day and since start.
 
+### Learning loop (research quality and strategy improvement)
+
+1. **Forecast ledger:** every research result is stored as a forecast, whether it was
+   traded, rejected by the strategy filters, or rejected by risk. Each forecast keeps the
+   probability, confidence, reasoning summary, evidence with URLs, chosen side, executable
+   all-in price, edge and decision.
+2. **Outcome scoring:** when the market resolves, each forecast gets:
+   - its Brier score (forecast accuracy: 0 is perfect, 0.25 is a coin flip);
+   - whether the chosen side was right;
+   - the realized P&L of the actual verified trade, after fees;
+   - a hypothetical return per $1 at the decision-time price, so skipped ideas count too;
+   - deterministic mistake tags (`WRONG_DIRECTION`, `OVERCONFIDENT`, `THIN_EDGE_LOST`,
+     `EXITED_EARLY_ON_WINNER`, `COSTS_TURNED_WIN_INTO_LOSS`, `MISSED_WINNER`, …);
+   - a plain-language comparison of the reasoning with what happened.
+3. **Post-mortems (paid, optional):** a short Claude review, without web search, separates
+   bad reasoning from bad luck and writes a one-sentence lesson. Limited to 2 per day and
+   counted against the monthly AI cap.
+4. **Feedback:** calibration statistics and recent lessons are given to the research agent
+   as data in its prompt. The prompt version is recorded so methods can be compared.
+5. **Position reviews:** every run, each research position is held while our probability
+   for its side is above the current bid after fees (plus a margin). It is sold when the
+   market reaches our fair value (`fair_value`). Every 72 h the position is re-researched
+   (paid, budgeted); if the new estimate is weaker and below the sell value, it is sold
+   (`thesis_weakened`). Stop-loss / take-profit still apply. Every decision is written to
+   `position_reviews`.
+6. **Evaluation report** (`report/evaluation.md`): results by strategy, method (model and
+   prompt), category, confidence, edge, side and entry vs review; calibration; mistakes;
+   lessons; proposals.
+7. **Validated improvements:**
+   - At most weekly, the bot searches a small grid of *bounded* strategy filters
+     (`min_edge` 0.03–0.20, `min_confidence` 0.50–0.90, blocked categories) on past
+     resolved forecasts (training data).
+   - A promising change becomes a proposal. It is tested **only on forecasts made after it
+     was proposed**, and applied (versioned in `strategy_params`) only if, on at least 20
+     new resolved forecasts, it beats the unchanged baseline by 0.02 per $1 staked.
+     Otherwise it is rejected after 80.
+   - Risk limits are never changed by learning.
+   - With `learning.auto_apply: false`, passed proposals wait for your approval instead.
+8. **Alerts:** a failed run, 3 non-OK runs in a row, a drawdown halt, or an approval
+   request writes `ALERTS.md` and makes the run exit with code 3, so GitHub e-mails you.
+   An exhausted AI budget is reported but is not an alert: research pauses and everything
+   else keeps running.
+
+Results need resolved markets, so learning is slow by nature. With ~2 research calls per
+day and markets resolving in 1–17 weeks, the first proposals typically become possible
+after several weeks, and applying one needs further weeks of new data.
+
+### Verification before activation
+
+`.github/workflows/paperbot-verify.yml` runs on every push to a `claude/**` branch:
+
+- **live-check** (LIVE market data, read-only): calls every Polymarket endpoint the bot
+  uses and validates the responses with the bot's own parsers.
+- **run-1 → run-2**, twice:
+  - **mock** pair: deterministic MOCK markets, so trades and positions definitely occur.
+  - **live** pair: real public market data.
+- Each run-2 executes on a *different* GitHub machine and restores the state that run-1
+  saved to `paperbot-verify-mock` / `paperbot-verify-live`. It then verifies the history
+  with `python -m paperbot.persistence_check`: $1,000 deposited once, earlier ledger rows
+  byte-identical, cash reconciling, all orders and positions preserved, one more run.
+- A database is labelled MOCK or LIVE and the bot refuses to mix them.
+
 ### Risk limits (config/paperbot.yaml → `risk`)
 
 | Rule | Default |
@@ -163,6 +233,9 @@ container host. Mount `/app/data` as a volume.
 | Alternative: Haiku 5.5 ($0.10/$0.50) | worst case ~$0.04/call (lower forecasting quality) |
 
 The model is set in `research.model`. Choosing between them is an owner decision.
+New research and position re-research share the 2-calls-per-day allowance. Post-mortems
+(about $0.01–0.02 each on Opus 5.5, no web search) have their own limit of 2 per day.
+All of them count toward the same hard $10 monthly cap.
 
 ### Monthly AI cap mechanics
 
@@ -203,4 +276,6 @@ reasons), `research` (evidence, raw answer, cost), `orders` (every attempt incl.
 liquidity observations, verification and timing), `fills` (MAIN/SHADOW), `positions`
 (MAIN/SHADOW, exit conditions), `position_marks` (mark-to-market history), `ledger` (all cash
 movements, MAIN/SHADOW), `api_costs`, `equity_snapshots`, `runs`, `events` (errors, halts,
-exits). Older v1 databases are migrated in place on startup.
+exits), `forecasts` (every research forecast, decision and outcome score), `position_reviews`
+(hold/sell decisions), `proposals` and `strategy_params` (validated, versioned improvements).
+Older v1 databases are migrated in place on startup.
