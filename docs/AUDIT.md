@@ -57,8 +57,10 @@ Reached the real public APIs from GitHub-hosted runners (the build container was
   `orderMinSize` 5 and `orderPriceMinTickSize` 0.01 on sampled markets.
 - **Fees:** each market has its own `feeSchedule` (e.g. `{"rate": 0.05, "exponent": 1,
   "takerOnly": true}`), plus `feesEnabled` and `feeType` (e.g. `sports_fees_v3`,
-  `economics_fees`). paperbot now uses the per-market schedule first. Sports were observed
-  at 0.05, which settles the 0.03 vs 0.05 disagreement between third-party sources.
+  `economics_fees`). paperbot now uses the per-market schedule first. Live sports markets
+  carry **both** 0.03 and 0.05 depending on their fee type, which explains why third-party
+  sources disagreed. Observed on 2026-10-14: politics 0.04, economics 0.05, sports 0.03 or 0.05,
+  geopolitics fees disabled.
   Categories need `include_tag=true` on `/markets`; without it every market looked
   "unknown" and got the conservative 7% rate.
 - CLOB `/book` and `/books`: real depth (dozens of levels), `min_order_size`, `tick_size`,
