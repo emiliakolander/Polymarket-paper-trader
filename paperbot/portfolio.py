@@ -13,10 +13,25 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from paperbot.db import Database, iso
+from paperbot.config import RiskConfig
+from paperbot.db import MAIN, SHADOW, Database, iso
 from paperbot.orderbook import BookError, OrderBook, parse_book, walk
 from paperbot.polymarket import ApiError, PolymarketClient
 from paperbot.risk import PortfolioState
+
+
+def exit_conditions(strategy: str, risk: Optional[RiskConfig], end_date: Optional[str]) -> dict:
+    """Exit rules fixed at entry and stored with the position (audit trail)."""
+    if strategy == "arbitrage":
+        return {"hold_to_resolution": True, "resolution_date": end_date,
+                "unwind_if_unhedged": True, "stop_loss_pct": None, "take_profit_pct": None,
+                "rule": "hold YES+NO pair to resolution; sell any unhedged excess"}
+    return {"hold_to_resolution": True, "resolution_date": end_date,
+            "stop_loss_pct": risk.stop_loss_pct,
+            "take_profit_pct": risk.take_profit_pct or None,
+            "rule": "exit if liquidation value <= cost*(1-stop_loss)"
+                    + (" or >= cost*(1+take_profit)" if risk.take_profit_pct else "")
+                    + "; otherwise hold to resolution"}
 
 
 def liquidation_value(book: OrderBook, shares: float, fee_rate: float) -> float:
@@ -67,8 +82,9 @@ class Portfolio:
 
     # ---------------------------------------------------------- settlement
     def settle_resolved(self, now: datetime) -> list[dict]:
+        """Settle MAIN and SHADOW positions of definitively resolved markets."""
         settled = []
-        markets = {r["market_id"] for r in self.db.open_positions()}
+        markets = {r["market_id"] for r in self.db.all_open_positions()}
         for market_id in sorted(markets):
             try:
                 market = self.client.get_market(market_id)
@@ -85,19 +101,21 @@ class Portfolio:
                     self.db.log_event(now, "ERROR", "SETTLEMENT_TOKEN_MISSING",
                                       f"token {pos['token_id']} not in resolved market {market_id}")
                     continue
-                payout = self.db.settle_position(pos["token_id"], price, now,
+                payout = self.db.settle_position(pos["position_id"], price, now,
                                                  f"resolved at {price:g}")
                 settled.append({"token_id": pos["token_id"], "market_id": market_id,
-                                "price": price, "payout": payout,
+                                "book": pos["book"], "price": price, "payout": payout,
                                 "pnl": payout - pos["cost_basis"]})
         return settled
 
     # ------------------------------------------------------------- marking
-    def mark_all(self, now: datetime, books: Optional[dict[str, OrderBook]] = None) -> dict:
-        """Value every open position at its liquidation value. Returns summary."""
-        positions = self.db.open_positions()
+    def mark_all(self, now: datetime, books: Optional[dict[str, OrderBook]] = None,
+                 run_id: Optional[str] = None) -> dict:
+        """Value every open position (MAIN and SHADOW) at its liquidation value on
+        the live bid side, and append a row to position_marks for each."""
+        positions = self.db.all_open_positions()
         books = dict(books or {})
-        missing = [p["token_id"] for p in positions if p["token_id"] not in books]
+        missing = sorted({p["token_id"] for p in positions if p["token_id"] not in books})
         if missing:
             try:
                 raw = self.client.get_books(missing)
@@ -108,19 +126,38 @@ class Portfolio:
                         pass
             except ApiError as exc:
                 self.db.log_event(now, "WARN", "MARK_FETCH_FAILED", str(exc))
-        total, unmarked = 0.0, 0
+        totals = {MAIN: 0.0, SHADOW: 0.0}
+        unmarked = {MAIN: 0, SHADOW: 0}
         values = {}
         for p in positions:
             book = books.get(p["token_id"])
             if book is None:
-                unmarked += 1
+                unmarked[p["book"]] += 1
                 value = p["mark_value"] if p["mark_value"] is not None else 0.0
+                self.db.set_mark(p["position_id"], None, now, run_id)
             else:
                 value = liquidation_value(book, p["shares"], p["fee_rate"] or 0.0)
-                self.db.set_mark(p["token_id"], value, now)
-            values[p["token_id"]] = value
-            total += value
-        return {"positions_value": total, "unmarked": unmarked, "values": values}
+                self.db.set_mark(p["position_id"], value, now, run_id, book.best_bid)
+            values[p["position_id"]] = value
+            totals[p["book"]] += value
+        return {"positions_value": totals[MAIN], "unmarked": unmarked[MAIN],
+                "shadow_value": totals[SHADOW], "shadow_unmarked": unmarked[SHADOW],
+                "values": values}
+
+    def exits_due(self, risk: RiskConfig) -> list[tuple[dict, str]]:
+        """MAIN research positions whose stored exit conditions are triggered."""
+        due = []
+        for p in self.db.open_positions(MAIN):
+            if p["strategy"] != "research" or p["mark_value"] is None or p["cost_basis"] <= 0:
+                continue
+            cond = json.loads(p["exit_conditions_json"] or "{}")
+            sl = cond.get("stop_loss_pct", risk.stop_loss_pct)
+            tp = cond.get("take_profit_pct")
+            if sl and p["mark_value"] <= p["cost_basis"] * (1 - sl):
+                due.append((dict(p), "stop_loss"))
+            elif tp and p["mark_value"] >= p["cost_basis"] * (1 + tp):
+                due.append((dict(p), "take_profit"))
+        return due
 
     # --------------------------------------------------------------- state
     def day_start_equity(self, now: datetime) -> float:

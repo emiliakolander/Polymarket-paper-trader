@@ -51,8 +51,9 @@ class FeeConfig:
 @dataclass(frozen=True)
 class ArbitrageConfig:
     min_net_edge_pct: float = 0.01
-    min_net_profit_usd: float = 0.50
-    max_trade_usd: float = 50.0
+    min_net_profit_usd: float = 0.10
+    target_pair_cost_usd: float = 10.0
+    max_one_leg_loss_usd: float = 3.0
     depth_participation: float = 0.5
     slippage_buffer: float = 0.003
     max_days_to_resolution: float = 90
@@ -72,7 +73,7 @@ class ResearchConfig:
     min_edge: float = 0.05
     min_confidence: float = 0.6
     kelly_fraction: float = 0.25
-    max_trade_usd: float = 40.0
+    target_order_usd: float = 3.0
     min_evidence_items: int = 2
 
 
@@ -84,6 +85,7 @@ class BudgetConfig:
     est_prompt_tokens: int = 3000
     pricing_usd_per_mtok: dict = field(default_factory=dict)
     unknown_model_pricing: tuple = (10.0, 50.0)
+    infra_cost_usd_per_month: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -92,7 +94,7 @@ class RiskConfig:
     max_total_exposure_pct: float = 0.50
     max_per_market_pct: float = 0.08
     max_open_positions: int = 10
-    min_trade_usd: float = 5.0
+    min_trade_usd: float = 1.0
     min_cash_reserve_pct: float = 0.20
     max_spread: float = 0.05
     max_quote_age_s: float = 30
@@ -101,15 +103,22 @@ class RiskConfig:
     max_trades_per_day: int = 10
     min_hours_to_resolution: float = 2
     stop_loss_pct: float = 0.35
+    take_profit_pct: float = 0.0          # 0 = disabled (hold to resolution)
 
 
 @dataclass(frozen=True)
 class ExecutionConfig:
     latency_s: float = 1.0
+    latency_jitter_s: float = 0.5
+    verify_delay_s: float = 2.0
+    verify_samples: int = 2
     limit_slippage_pct: float = 0.02
     depth_participation: float = 0.5
     random_reject_rate: float = 0.02
     unwind_unhedged: bool = True
+    min_marketable_notional_usd: float = 1.0
+    share_decimals: int = 2
+    default_tick_size: float = 0.01
 
 
 @dataclass(frozen=True)
@@ -144,6 +153,7 @@ _FRACTIONS = {
     ("risk", "max_position_pct"), ("risk", "max_total_exposure_pct"),
     ("risk", "max_per_market_pct"), ("risk", "min_cash_reserve_pct"), ("risk", "max_spread"),
     ("risk", "daily_loss_limit_pct"), ("risk", "max_drawdown_pct"), ("risk", "stop_loss_pct"),
+    ("risk", "take_profit_pct"),
     ("execution", "limit_slippage_pct"), ("execution", "depth_participation"),
     ("execution", "random_reject_rate"), ("fees", "unknown_category_rate"),
 }
@@ -170,6 +180,10 @@ def _validate(cfg: Config) -> None:
     for cat, rate in cfg.fees.category_rates.items():
         if not (0 <= float(rate) <= 1):
             raise ConfigError(f"fees.category_rates.{cat} must be between 0 and 1")
+    if cfg.execution.verify_samples < 1:
+        raise ConfigError("execution.verify_samples must be >= 1 (fills must be verified)")
+    if not (0 <= cfg.execution.share_decimals <= 6):
+        raise ConfigError("execution.share_decimals must be between 0 and 6")
     if cfg.budget.monthly_ai_cap_usd < 0:
         raise ConfigError("budget.monthly_ai_cap_usd must be >= 0")
     for url in (cfg.api.gamma_base, cfg.api.clob_base):

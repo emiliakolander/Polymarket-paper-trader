@@ -86,8 +86,8 @@ def test_full_cycle_executes_arbitrage_and_persists(cfg, paper_env, tmp_path):
     assert summary["status"] == "OK", summary["errors"]
     assert summary["arbitrage"]["executed"] == {"HEDGED": 1}
     db = Database(cfg.database_path)
-    # 0.95 per pair, budget capped at 5% of equity -> $50 max cost.
-    assert db.cash() == pytest.approx(1000 - 50, abs=0.01)
+    # 0.95 per pair, target pair cost $10 -> 10.52 shares per leg.
+    assert db.cash() == pytest.approx(1000 - 10.52 * 0.95, abs=0.01)
     assert {p["outcome"] for p in db.open_positions()} == {"YES", "NO"}
     snap = db.q1("SELECT * FROM equity_snapshots ORDER BY ts DESC LIMIT 1")
     # Liquidation value at bids: shares*(0.40+0.45) < cost -> conservative unrealized loss shown.
@@ -111,8 +111,8 @@ def test_restart_does_not_duplicate_state_and_settles_later(cfg, paper_env):
     db = Database(cfg.database_path)
     shares = db.q1("SELECT SUM(settle_price) s, COUNT(*) c FROM positions WHERE status='SETTLED'")
     assert shares["c"] == 2
-    # Bought ~52.63 pairs for $50 -> payout = shares * $1.
-    assert db.realized_pnl() == pytest.approx(50 / 0.95 - 50, abs=0.01)
+    # Bought 10.52 pairs at $0.95 -> payout = shares * $1.
+    assert db.realized_pnl() == pytest.approx(10.52 * 0.05, abs=0.01)
     assert db.q1("SELECT COUNT(*) c FROM ledger WHERE kind='DEPOSIT'")["c"] == 1
     clock.sleep(3600)
     s3 = engine(cfg, w, clock).run_once()
@@ -302,3 +302,16 @@ def test_win_rate_counts_arbitrage_pair_once(cfg, paper_env):
 def test_usd_format_has_no_negative_zero():
     from paperbot.dashboard import _usd
     assert _usd(-0.0001) == "$0.00" and _usd(-1.234) == "-$1.23"
+
+
+def test_no_reentry_against_phantom_liquidity(cfg, paper_env):
+    w, clock = World(), Clock()
+    engine(cfg, w, clock).run_once()
+    clock.sleep(3600)
+    s = engine(cfg, w, clock).run_once()   # same book still displayed
+    assert s["arbitrage"]["executed"] == {}
+    db = Database(cfg.database_path)
+    assert db.q1("SELECT COUNT(*) c FROM orders WHERE side='BUY'")["c"] == 2
+    assert "ALREADY_IN_MARKET" in db.q1(
+        "SELECT reasons_json FROM signals ORDER BY ts DESC LIMIT 1")["reasons_json"]
+    db.close()

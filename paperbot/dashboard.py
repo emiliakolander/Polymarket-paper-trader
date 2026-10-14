@@ -137,6 +137,8 @@ def render(db: Database, cap_usd: float) -> str:
         ("Win rate", wr, f"{m['closed_trades']} closed trades (arb pair = 1)"),
         ("Fees paid", _usd(m["fees_paid"]), "simulated taker fees"),
         ("AI cost (month)", _usd(m["ai_cost_month"]), f"cap {_usd(m['ai_cap'])}"),
+        ("Unverified fills", str(m["shadow_open_positions"]),
+         f"shadow book, not counted ({_usd(m['shadow_value'])})"),
     ]
     tiles_html = "".join(f'<div class="tile"><div class="k">{_e(k)}</div><div class="v">{_e(v)}</div>'
                          f'<div class="n">{_e(n)}</div></div>' for k, v, n in tiles)
@@ -154,10 +156,13 @@ def render(db: Database, cap_usd: float) -> str:
     sig_rows = [[_e(r["ts"][:16].replace("T", " ")), _e(r["kind"]), _e((r["question"] or "")[:60]),
                  _e(r["outcome"]), _e(r["status"]), _usd(r["cost_usd"]), _usd(r["expected_net_usd"])]
                 for r in sig]
-    orders = db.q("SELECT created_at, side, outcome, status, requested_shares, filled_shares, avg_price, "
-                  "fee, latency_ms, reason FROM orders ORDER BY created_at DESC LIMIT 30")
+    orders = db.q("SELECT created_at, side, outcome, status, verification, requested_shares, "
+                  "filled_shares, uncertain_shares, avg_price, fee, latency_ms, reason FROM orders "
+                  "ORDER BY created_at DESC LIMIT 30")
     ord_rows = [[_e(o["created_at"][:16].replace("T", " ")), _e(o["side"]), _e(o["outcome"]),
-                 _e(o["status"]), f"{o['filled_shares']:.2f}/{o['requested_shares']:.2f}",
+                 _e(o["status"]), _e(o["verification"] or "–"),
+                 f"{o['filled_shares']:.2f}/{o['requested_shares']:.2f}"
+                 + (f" (+{o['uncertain_shares']:.2f} unverified)" if o["uncertain_shares"] else ""),
                  f"{o['avg_price']:.4f}" if o["avg_price"] else "–", _usd(o["fee"]),
                  f"{(o['latency_ms'] or 0):.0f}", _e((o["reason"] or "")[:60])] for o in orders]
     runs = db.q("SELECT started_at, status, errors_json, api_stats_json FROM runs "
@@ -184,7 +189,7 @@ errors 24h: {m['errors_24h']}</div>
 <h2>Open positions</h2><div class="card">{_table(['Market', 'Side', 'Strategy', 'Shares', 'Cost', 'Value now'], pos_rows, (3, 4, 5))}</div>
 <h2>Signals acted on</h2><div class="card">{_table(['Time', 'Kind', 'Market', 'Side', 'Status', 'Cost', 'Expected net'], sig_rows, (5, 6))}</div>
 <h2>Rejected signals</h2><div class="card">{_table(['Time', 'Kind', 'Market', 'Reasons'], rej_rows)}</div>
-<h2>Orders (incl. failed fills)</h2><div class="card">{_table(['Time', 'Side', 'Out', 'Status', 'Filled', 'Avg px', 'Fee', 'Latency ms', 'Note'], ord_rows, (4, 5, 6, 7))}</div>
+<h2>Orders (incl. failed fills)</h2><div class="card">{_table(['Time', 'Side', 'Out', 'Status', 'Verified', 'Confirmed/requested', 'Avg px', 'Fee', 'Latency ms', 'Note'], ord_rows, (5, 6, 7, 8))}</div>
 <h2>Bot health — recent runs</h2><div class="card">{_table(['Started', 'Status', 'Errors', 'Polymarket API stats'], run_rows, (2,))}</div>
 </main><script>{JS}</script></body></html>"""
 

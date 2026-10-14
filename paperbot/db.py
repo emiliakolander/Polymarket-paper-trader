@@ -8,6 +8,9 @@ Design rules
 - Orders are first inserted as PENDING. If the process dies before the fill
   transaction commits, the next run marks them INTERRUPTED (no money moved).
 - A run lock with expiry prevents two scheduled runs from overlapping.
+- Two books: MAIN holds only fills that were VERIFIED against later order-book
+  data; SHADOW holds fills that were simulated but could not be verified
+  ("uncertain"). Only MAIN affects the $1,000 virtual capital.
 """
 
 from __future__ import annotations
@@ -20,7 +23,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+MAIN, SHADOW = "MAIN", "SHADOW"
 EPS = 1e-9
 
 SCHEMA = """
@@ -76,13 +80,19 @@ CREATE TABLE IF NOT EXISTS orders (
     requested_shares REAL NOT NULL, limit_price REAL NOT NULL, signal_price REAL,
     status TEXT NOT NULL, filled_shares REAL NOT NULL DEFAULT 0, avg_price REAL,
     notional REAL NOT NULL DEFAULT 0, fee REAL NOT NULL DEFAULT 0,
-    latency_ms REAL, book_hash TEXT, reason TEXT
+    latency_ms REAL, book_hash TEXT, reason TEXT,
+    strategy TEXT, decision_at TEXT, intended_notional REAL,
+    verification TEXT, uncertain_shares REAL NOT NULL DEFAULT 0,
+    uncertain_notional REAL NOT NULL DEFAULT 0, uncertain_fee REAL NOT NULL DEFAULT 0,
+    liquidity_json TEXT, timing_json TEXT, position_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
 
 CREATE TABLE IF NOT EXISTS fills (
     id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL REFERENCES orders(order_id),
-    ts TEXT NOT NULL, price REAL NOT NULL, shares REAL NOT NULL
+    ts TEXT NOT NULL, price REAL NOT NULL, shares REAL NOT NULL,
+    book TEXT NOT NULL DEFAULT 'MAIN'
 );
 
 CREATE TABLE IF NOT EXISTS positions (
@@ -91,14 +101,21 @@ CREATE TABLE IF NOT EXISTS positions (
     shares REAL NOT NULL DEFAULT 0, cost_basis REAL NOT NULL DEFAULT 0,
     realized_pnl REAL NOT NULL DEFAULT 0, fees_paid REAL NOT NULL DEFAULT 0,
     opened_at TEXT NOT NULL, closed_at TEXT, status TEXT NOT NULL,
-    settle_price REAL, mark_value REAL, mark_ts TEXT, close_reason TEXT
+    settle_price REAL, mark_value REAL, mark_ts TEXT, close_reason TEXT,
+    book TEXT NOT NULL DEFAULT 'MAIN', exit_conditions_json TEXT, entry_order_id TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_position
-    ON positions(token_id) WHERE status = 'OPEN';
+
+CREATE TABLE IF NOT EXISTS position_marks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, run_id TEXT,
+    position_id TEXT NOT NULL, book TEXT NOT NULL, shares REAL NOT NULL,
+    cost_basis REAL NOT NULL, liquidation_value REAL, best_bid REAL, marked INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_marks_pos ON position_marks(position_id, ts);
 
 CREATE TABLE IF NOT EXISTS ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, kind TEXT NOT NULL,
-    amount REAL NOT NULL, order_id TEXT, token_id TEXT, note TEXT
+    amount REAL NOT NULL, order_id TEXT, token_id TEXT, note TEXT,
+    book TEXT NOT NULL DEFAULT 'MAIN'
 );
 
 CREATE TABLE IF NOT EXISTS api_costs (
@@ -156,6 +173,33 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA synchronous=FULL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    _MIGRATIONS = [
+        ("orders", "strategy", "TEXT"), ("orders", "decision_at", "TEXT"),
+        ("orders", "intended_notional", "REAL"), ("orders", "verification", "TEXT"),
+        ("orders", "uncertain_shares", "REAL NOT NULL DEFAULT 0"),
+        ("orders", "uncertain_notional", "REAL NOT NULL DEFAULT 0"),
+        ("orders", "uncertain_fee", "REAL NOT NULL DEFAULT 0"),
+        ("orders", "liquidity_json", "TEXT"), ("orders", "timing_json", "TEXT"),
+        ("orders", "position_id", "TEXT"),
+        ("fills", "book", "TEXT NOT NULL DEFAULT 'MAIN'"),
+        ("positions", "book", "TEXT NOT NULL DEFAULT 'MAIN'"),
+        ("positions", "exit_conditions_json", "TEXT"), ("positions", "entry_order_id", "TEXT"),
+        ("ledger", "book", "TEXT NOT NULL DEFAULT 'MAIN'"),
+    ]
+
+    def _migrate(self) -> None:
+        """Bring a v1 database up to the current schema (additive, idempotent)."""
+        for table, column, ddl in self._MIGRATIONS:
+            cols = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        self.conn.execute("DROP INDEX IF EXISTS idx_one_open_position")
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_position_book "
+                          "ON positions(token_id, book) WHERE status = 'OPEN'")
+        if self.get_meta("schema_version") not in (None, str(SCHEMA_VERSION)):
+            self.set_meta("schema_version", SCHEMA_VERSION)
 
     def close(self) -> None:
         try:
@@ -316,77 +360,109 @@ class Database:
 
     # ------------------------------------------------------------- orders
     def record_pending_order(self, *, order_id: str, signal_id: Optional[str], run_id: str,
-                     now: datetime, market_id: str, token_id: str, outcome: str, side: str,
-                     requested_shares: float, limit_price: float, signal_price: float) -> None:
+                             now: datetime, market_id: str, token_id: str, outcome: str, side: str,
+                             requested_shares: float, limit_price: float, signal_price: float,
+                             strategy: Optional[str] = None, decision_at: Optional[datetime] = None,
+                             liquidity: Optional[list] = None) -> None:
         self.conn.execute(
             "INSERT INTO orders(order_id,signal_id,run_id,created_at,market_id,token_id,outcome,"
-            "side,requested_shares,limit_price,signal_price,status) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,'PENDING')",
+            "side,requested_shares,limit_price,signal_price,status,strategy,decision_at,"
+            "intended_notional,liquidity_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,'PENDING',?,?,?,?)",
             (order_id, signal_id, run_id, iso(now), market_id, token_id, outcome, side,
-             requested_shares, limit_price, signal_price),
+             requested_shares, limit_price, signal_price, strategy,
+             iso(decision_at or now), requested_shares * limit_price,
+             json.dumps(liquidity or [], default=str)),
         )
 
     def finalize_order(self, order_id: str, now: datetime, result: Any,
                        position: Optional[dict] = None) -> None:
         """Atomically record the outcome of an order and its accounting effects.
 
-        `result` is an execution.FillResult. `position` carries static info needed
-        to open a position on a BUY (market_id, outcome, question, ...).
+        `result` is an execution.FillResult. VERIFIED shares (result.shares) are
+        booked in MAIN. Unverified shares of a BUY (result.uncertain_shares) are
+        booked in SHADOW only. An unverified SELL leaves the MAIN position open.
         """
         order = self.q1("SELECT * FROM orders WHERE order_id=?", (order_id,))
         if order is None:
             raise ValueError(f"unknown order {order_id}")
         if order["status"] != "PENDING":
             raise ValueError(f"order {order_id} already finalised ({order['status']})")
+        u_shares = getattr(result, "uncertain_shares", 0.0)
         with self.tx():
             self.conn.execute(
                 "UPDATE orders SET status=?, done_at=?, filled_shares=?, avg_price=?, notional=?, "
-                "fee=?, latency_ms=?, book_hash=?, reason=? WHERE order_id=?",
+                "fee=?, latency_ms=?, book_hash=?, reason=?, verification=?, uncertain_shares=?, "
+                "uncertain_notional=?, uncertain_fee=?, liquidity_json=?, timing_json=? "
+                "WHERE order_id=?",
                 (result.status, iso(now), result.shares, result.avg_price, result.notional,
-                 result.fee, result.latency_ms, result.book_hash, result.reason, order_id),
+                 result.fee, result.latency_ms, result.book_hash, result.reason,
+                 getattr(result, "verification", None), u_shares,
+                 getattr(result, "uncertain_notional", 0.0), getattr(result, "uncertain_fee", 0.0),
+                 json.dumps(getattr(result, "observations", None)
+                            or json.loads(order["liquidity_json"] or "[]"), default=str),
+                 json.dumps(getattr(result, "timing", {}), default=str), order_id),
             )
-            if result.shares <= EPS:
-                return
-            for price, shares in result.fills:
-                self.conn.execute("INSERT INTO fills(order_id,ts,price,shares) VALUES(?,?,?,?)",
-                                  (order_id, iso(now), price, shares))
             token = order["token_id"]
-            if order["side"] == "BUY":
-                self._apply_buy(now, order_id, token, result, position or {}, order)
-            else:
-                self._apply_sell(now, order_id, token, result)
+            position_id = None
+            if result.shares > EPS:
+                for price, shares in result.fills:
+                    self.conn.execute(
+                        "INSERT INTO fills(order_id,ts,price,shares,book) VALUES(?,?,?,?,'MAIN')",
+                        (order_id, iso(now), price, shares))
+                if order["side"] == "BUY":
+                    position_id = self._apply_buy(now, order_id, token, result.shares,
+                                                  result.notional, result.fee, position or {},
+                                                  order, MAIN)
+                else:
+                    position_id = self._apply_sell(now, order_id, token, result)
+            if order["side"] == "BUY" and u_shares > EPS:
+                for price, shares in getattr(result, "uncertain_fills", []):
+                    self.conn.execute(
+                        "INSERT INTO fills(order_id,ts,price,shares,book) VALUES(?,?,?,?,'SHADOW')",
+                        (order_id, iso(now), price, shares))
+                shadow_id = self._apply_buy(now, order_id, token, u_shares,
+                                            result.uncertain_notional, result.uncertain_fee,
+                                            position or {}, order, SHADOW)
+                position_id = position_id or shadow_id
+            if position_id:
+                self.conn.execute("UPDATE orders SET position_id=? WHERE order_id=?",
+                                  (position_id, order_id))
 
     def _ledger(self, now: datetime, kind: str, amount: float, order_id: Optional[str],
-                token_id: Optional[str], note: str = "") -> None:
+                token_id: Optional[str], note: str = "", book: str = MAIN) -> None:
         self.conn.execute(
-            "INSERT INTO ledger(ts,kind,amount,order_id,token_id,note) VALUES(?,?,?,?,?,?)",
-            (iso(now), kind, amount, order_id, token_id, note),
+            "INSERT INTO ledger(ts,kind,amount,order_id,token_id,note,book) VALUES(?,?,?,?,?,?,?)",
+            (iso(now), kind, amount, order_id, token_id, note, book),
         )
 
-    def _apply_buy(self, now, order_id, token, result, info, order) -> None:
-        self._ledger(now, "BUY", -result.notional, order_id, token)
-        if result.fee > 0:
-            self._ledger(now, "FEE", -result.fee, order_id, token)
-        pos = self.q1("SELECT * FROM positions WHERE token_id=? AND status='OPEN'", (token,))
+    def _apply_buy(self, now, order_id, token, shares, notional, fee, info, order, book) -> str:
+        self._ledger(now, "BUY", -notional, order_id, token, book=book)
+        if fee > 0:
+            self._ledger(now, "FEE", -fee, order_id, token, book=book)
+        pos = self.q1("SELECT * FROM positions WHERE token_id=? AND status='OPEN' AND book=?",
+                      (token, book))
         if pos is None:
+            pid = new_id()
             self.conn.execute(
                 "INSERT INTO positions(position_id,token_id,market_id,condition_id,outcome,question,"
-                "strategy,end_date,fee_rate,shares,cost_basis,fees_paid,opened_at,status) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN')",
-                (new_id(), token, order["market_id"], info.get("condition_id"), order["outcome"],
+                "strategy,end_date,fee_rate,shares,cost_basis,fees_paid,opened_at,status,book,"
+                "exit_conditions_json,entry_order_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'OPEN',?,?,?)",
+                (pid, token, order["market_id"], info.get("condition_id"), order["outcome"],
                  info.get("question"), info.get("strategy"), info.get("end_date"),
-                 info.get("fee_rate"), result.shares, result.notional + result.fee,
-                 result.fee, iso(now)),
+                 info.get("fee_rate"), shares, notional + fee, fee, iso(now), book,
+                 json.dumps(info.get("exit_conditions") or {}), order_id),
             )
-        else:
-            self.conn.execute(
-                "UPDATE positions SET shares=shares+?, cost_basis=cost_basis+?, fees_paid=fees_paid+? "
-                "WHERE position_id=?",
-                (result.shares, result.notional + result.fee, result.fee, pos["position_id"]),
-            )
+            return pid
+        self.conn.execute(
+            "UPDATE positions SET shares=shares+?, cost_basis=cost_basis+?, fees_paid=fees_paid+? "
+            "WHERE position_id=?",
+            (shares, notional + fee, fee, pos["position_id"]),
+        )
+        return pos["position_id"]
 
-    def _apply_sell(self, now, order_id, token, result) -> None:
-        pos = self.q1("SELECT * FROM positions WHERE token_id=? AND status='OPEN'", (token,))
+    def _apply_sell(self, now, order_id, token, result) -> str:
+        pos = self.q1("SELECT * FROM positions WHERE token_id=? AND status='OPEN' AND book='MAIN'",
+                      (token,))
         if pos is None or pos["shares"] + EPS < result.shares:
             raise ValueError(f"cannot sell {result.shares} of {token}: insufficient position")
         portion = pos["cost_basis"] * (result.shares / pos["shares"])
@@ -404,43 +480,63 @@ class Database:
              realized, result.fee, "CLOSED" if closed else "OPEN",
              iso(now) if closed else None, result.reason if closed else None, pos["position_id"]),
         )
+        return pos["position_id"]
 
-    def settle_position(self, token_id: str, price: float, now: datetime, note: str) -> float:
+    def settle_position(self, position_id: str, price: float, now: datetime, note: str) -> float:
         """Resolution payout at `price` per share (1.0 win, 0.0 loss). Returns payout."""
         with self.tx():
-            pos = self.q1("SELECT * FROM positions WHERE token_id=? AND status='OPEN'", (token_id,))
+            pos = self.q1("SELECT * FROM positions WHERE position_id=? AND status='OPEN'",
+                          (position_id,))
             if pos is None:
                 return 0.0
             payout = pos["shares"] * price
-            self._ledger(now, "SETTLEMENT", payout, None, token_id, note)
+            self._ledger(now, "SETTLEMENT", payout, None, pos["token_id"], note, book=pos["book"])
             self.conn.execute(
                 "UPDATE positions SET shares=0, cost_basis=0, realized_pnl=realized_pnl+?, "
                 "status='SETTLED', closed_at=?, settle_price=?, close_reason=?, mark_value=0 "
                 "WHERE position_id=?",
-                (payout - pos["cost_basis"], iso(now), price, note, pos["position_id"]),
+                (payout - pos["cost_basis"], iso(now), price, note, position_id),
             )
             return payout
 
-    def set_mark(self, token_id: str, value: Optional[float], now: datetime) -> None:
+    def set_mark(self, position_id: str, value: Optional[float], now: datetime,
+                 run_id: Optional[str] = None, best_bid: Optional[float] = None) -> None:
+        pos = self.q1("SELECT * FROM positions WHERE position_id=?", (position_id,))
+        if pos is None:
+            return
+        if value is not None:
+            self.conn.execute("UPDATE positions SET mark_value=?, mark_ts=? WHERE position_id=?",
+                              (value, iso(now), position_id))
         self.conn.execute(
-            "UPDATE positions SET mark_value=?, mark_ts=? WHERE token_id=? AND status='OPEN'",
-            (value, iso(now), token_id))
+            "INSERT INTO position_marks(ts,run_id,position_id,book,shares,cost_basis,"
+            "liquidation_value,best_bid,marked) VALUES(?,?,?,?,?,?,?,?,?)",
+            (iso(now), run_id, position_id, pos["book"], pos["shares"], pos["cost_basis"],
+             value, best_bid, int(value is not None)),
+        )
 
     # ----------------------------------------------------------- queries
     def cash(self) -> float:
-        return float(self.q1("SELECT COALESCE(SUM(amount),0) AS c FROM ledger")["c"])
+        """Virtual cash of the MAIN (verified) book."""
+        return float(self.q1(
+            "SELECT COALESCE(SUM(amount),0) AS c FROM ledger WHERE book='MAIN'")["c"])
 
     def starting_capital(self) -> float:
         return float(self.get_meta("starting_capital", "0"))
 
-    def open_positions(self) -> list[sqlite3.Row]:
+    def open_positions(self, book: str = MAIN) -> list[sqlite3.Row]:
+        return self.q("SELECT * FROM positions WHERE status='OPEN' AND book=? ORDER BY opened_at",
+                      (book,))
+
+    def all_open_positions(self) -> list[sqlite3.Row]:
         return self.q("SELECT * FROM positions WHERE status='OPEN' ORDER BY opened_at")
 
     def total_fees(self) -> float:
-        return -float(self.q1("SELECT COALESCE(SUM(amount),0) s FROM ledger WHERE kind='FEE'")["s"])
+        return -float(self.q1(
+            "SELECT COALESCE(SUM(amount),0) s FROM ledger WHERE kind='FEE' AND book='MAIN'")["s"])
 
     def realized_pnl(self) -> float:
-        return float(self.q1("SELECT COALESCE(SUM(realized_pnl),0) s FROM positions")["s"])
+        return float(self.q1(
+            "SELECT COALESCE(SUM(realized_pnl),0) s FROM positions WHERE book='MAIN'")["s"])
 
     def trades_since(self, since: datetime) -> int:
         return int(self.q1(

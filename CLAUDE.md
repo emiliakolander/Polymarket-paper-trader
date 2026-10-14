@@ -12,6 +12,7 @@ Autonomous paper trading bot for [Polymarket](https://polymarket.com) prediction
 Docs: `docs/PAPERBOT.md`, audit: `docs/AUDIT.md`. Tests: `python -m pytest -c pytest-paperbot.ini`
 (requires `PAPER_MODE=true` only for CLI runs; tests set it themselves). Rules for paperbot:
 never add order-placement/signing code or wallet handling; never value positions at midpoints;
+never count UNCERTAIN (unverified) fills in MAIN-book performance — they belong in the SHADOW book;
 every new limit goes in `config/paperbot.yaml` and `paperbot/risk.py` with a test.
 
 ## How to run (legacy bot)

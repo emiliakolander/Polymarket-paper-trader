@@ -36,6 +36,8 @@ class Market:
     fee_rate: float
     labels: list[str] = field(default_factory=list)
     description: str = ""
+    order_min_size: float = 0.0          # Gamma orderMinSize (fallback if the book lacks it)
+    tick_size: Optional[float] = None    # Gamma orderPriceMinTickSize
     yes_book: Optional[OrderBook] = None
     no_book: Optional[OrderBook] = None
 
@@ -117,6 +119,8 @@ def parse_market(raw: dict, cfg: Config) -> tuple[Optional[Market], str]:
         fee_rate=rate,
         labels=labels,
         description=str(raw.get("description") or "")[:4000],
+        order_min_size=_f(raw.get("orderMinSize")) or 0.0,
+        tick_size=_f(raw.get("orderPriceMinTickSize")),
     ), ""
 
 

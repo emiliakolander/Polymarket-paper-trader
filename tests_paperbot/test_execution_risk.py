@@ -119,7 +119,8 @@ def test_api_failure_and_bad_book(cfg, paper_env):
 def test_delayed_execution_latency_is_recorded(cfg, paper_env):
     from paperbot.config import load_config
     cfg2 = load_config(overrides={"database_path": cfg.database_path,
-                                  "execution": {"latency_s": 2.5, "random_reject_rate": 0.0}})
+                                  "execution": {"latency_s": 2.5, "latency_jitter_s": 0,
+                                                "verify_delay_s": 0, "random_reject_rate": 0.0}})
     s = FakeSession()
     book_route(s, "tokY", bids=[(0.48, 100)], asks=[(0.50, 100)])
     ex, db, _, clock = make_exec(cfg2, s)
@@ -270,7 +271,7 @@ def test_risk_approves_clean_trade(cfg):
 
 @pytest.mark.parametrize("p_kw,s_kw,reason", [
     ({"cost_usd": 60}, {}, "POSITION_TOO_LARGE"),
-    ({"cost_usd": 2}, {}, "BELOW_MIN_TRADE"),
+    ({"cost_usd": 0.5}, {}, "BELOW_MIN_TRADE"),
     ({}, {"exposure_usd": 480}, "TOTAL_EXPOSURE_LIMIT"),
     ({}, {"market_exposure_usd": 50}, "MARKET_EXPOSURE_LIMIT"),
     ({}, {"cash": 220}, "CASH_RESERVE"),
@@ -296,7 +297,7 @@ def test_risk_rejections(cfg, p_kw, s_kw, reason):
 
 
 def test_risk_lists_all_violations(cfg):
-    d = RiskEngine(cfg.risk).check(prop(cost_usd=2, quote_age_s=100), state(halted=True))
+    d = RiskEngine(cfg.risk).check(prop(cost_usd=0.5, quote_age_s=100), state(halted=True))
     assert {"BELOW_MIN_TRADE", "STALE_QUOTE", "HALTED"} <= set(d.reasons)
 
 

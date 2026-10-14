@@ -24,7 +24,7 @@ from paperbot.config import Config
 from paperbot.db import Database, new_id
 from paperbot.execution import PaperExecutor, utcnow
 from paperbot.polymarket import PolymarketClient
-from paperbot.portfolio import Portfolio, hours_until
+from paperbot.portfolio import Portfolio, exit_conditions, hours_until
 from paperbot.research import ResearchAgent, anthropic_client_factory, compute_signal
 from paperbot.risk import RiskEngine, TradeProposal
 from paperbot.safety import startup_checks
@@ -118,14 +118,16 @@ class _RunContext:
         return self.e.clock()
 
     def remark(self) -> dict:
-        mark = self.portfolio.mark_all(self.now(), self.books)
+        mark = self.portfolio.mark_all(self.now(), self.books, self.run_id)
         self.positions_value = mark["positions_value"]
         return mark
 
     def execute(self) -> None:
         self.summary["settled"] = self.stage("settle", lambda: self.portfolio.settle_resolved(self.now())) or []
         self.stage("mark", self.remark)
-        self.summary["stop_losses"] = self.stage("stop_loss", self.stop_losses) or 0
+        self.summary["exits"] = self.stage("exits", self.apply_exits) or []
+        self.summary["unhedged_repair"] = self.stage(
+            "unhedged_repair", lambda: arbitrage.repair_unhedged(self.executor, self.db, self.run_id)) or []
         self.stage("drawdown", self.check_halt)
 
         scan = self.stage("scan", lambda: MarketScanner(self.cfg, self.e.client, self.db)
@@ -148,6 +150,8 @@ class _RunContext:
                                                            "unmarked": -1}
         snap = self.portfolio.snapshot(self.now(), self.run_id, mark)
         self.summary["equity"] = {k: round(v, 4) if isinstance(v, float) else v for k, v in snap.items()}
+        self.summary["shadow"] = {"value": round(mark.get("shadow_value", 0.0), 4),
+                                  "unmarked": mark.get("shadow_unmarked", 0)}
         self.stage("drawdown_final", self.check_halt)
         days = self.cfg.scanner.snapshot_retention_days
         self.summary["pruned_snapshots"] = self.stage(
@@ -163,24 +167,25 @@ class _RunContext:
                                   f"equity {st.equity:.2f} vs peak {st.peak_equity:.2f}; "
                                   "new entries halted until `python -m paperbot resume`", self.run_id)
 
-    def stop_losses(self) -> int:
-        n = 0
-        for pos in self.db.open_positions():
-            if pos["strategy"] != "research":
-                continue
-            if self.risk.should_stop_loss(pos["cost_basis"], pos["mark_value"]):
-                r = self.executor.place(
-                    run_id=self.run_id, signal_id=None, market_id=pos["market_id"],
-                    token_id=pos["token_id"], outcome=pos["outcome"], side="SELL",
-                    shares=pos["shares"], limit_price=0.01, signal_price=0.0,
-                    fee_rate=pos["fee_rate"] or 0.0, reason="stop loss",
-                )
-                self.db.log_event(self.now(), "INFO", "STOP_LOSS",
-                                  f"{pos['question']}: {r.status} {r.shares:.2f} shares", self.run_id)
-                n += 1
-        if n:
+    def apply_exits(self) -> list[dict]:
+        """Execute exits whose stored exit conditions are triggered (verified sells)."""
+        done = []
+        for pos, why in self.portfolio.exits_due(self.cfg.risk):
+            r = self.executor.place(
+                run_id=self.run_id, signal_id=None, market_id=pos["market_id"],
+                token_id=pos["token_id"], outcome=pos["outcome"], side="SELL",
+                shares=pos["shares"], limit_price=0.0, signal_price=0.0,
+                fee_rate=pos["fee_rate"] or 0.0, reason=why, strategy=pos["strategy"],
+                decision_at=self.now(),
+            )
+            self.db.log_event(self.now(), "INFO", why.upper(),
+                              f"{pos['question']}: {r.status}/{r.verification} "
+                              f"{r.shares:.2f} of {pos['shares']:.2f} shares sold", self.run_id)
+            done.append({"position_id": pos["position_id"], "trigger": why, "status": r.status,
+                         "verification": r.verification, "sold": r.shares})
+        if done:
             self.remark()
-        return n
+        return done
 
     def _signal(self, **kw) -> str:
         return self.db.insert_signal(run_id=self.run_id, now=self.now(), **kw)
@@ -191,7 +196,8 @@ class _RunContext:
             out["evaluated"] += 1
             now = self.now()
             st = self.portfolio.state(now, self.positions_value, m.market_id)
-            ev = arbitrage.evaluate(m, self.cfg.arbitrage, now, self.risk.max_order_usd(st))
+            ev = arbitrage.evaluate(m, self.cfg.arbitrage, now, self.risk.max_order_usd(st),
+                                    self.cfg.execution)
             if not ev.ok:
                 # Only persist interesting misses: asks summed below $1 but fees/depth killed it.
                 if ev.best_ask_sum is not None and ev.best_ask_sum < 1.0:
@@ -207,6 +213,11 @@ class _RunContext:
                 max_days_to_resolution=self.cfg.arbitrage.max_days_to_resolution,
             )
             decision = self.risk.check(proposal, st)
+            if m.market_id in st.open_markets:
+                # We never really traded, so the book still shows the liquidity we
+                # "took" earlier. Re-entering would trade against phantom depth.
+                decision.approved = False
+                decision.reasons.append("ALREADY_IN_MARKET")
             sid = self._signal(kind="arbitrage", market_id=m.market_id, question=m.question,
                                outcome="YES+NO", expected_net_usd=ev.net_usd, edge=ev.edge_pct,
                                cost_usd=ev.cost_usd,
@@ -218,9 +229,11 @@ class _RunContext:
             out["approved"] += 1
             res = arbitrage.execute(self.executor, ev, self.run_id, sid,
                                     self.cfg.execution.unwind_unhedged)
-            self.db.update_signal(sid, f"EXECUTED_{res.status}" if res.status != "FAILED" else "EXEC_FAILED",
-                                  [l.status for l in res.legs] + ([f"UNWIND_{res.unwind.status}"]
-                                                                  if res.unwind else []))
+            self.db.update_signal(
+                sid, "EXEC_FAILED" if res.status == "FAILED" else f"EXECUTED_{res.status}",
+                [f"LEG{i + 1}_{l.status}_{l.verification}" for i, l in enumerate(res.legs)]
+                + ([f"UNWIND_{res.unwind.status}_{res.unwind.verification}"] if res.unwind else [])
+                + ([res.note] if res.note else []))
             out["executed"][res.status] = out["executed"].get(res.status, 0) + 1
             self.remark()
         return out
@@ -259,6 +272,9 @@ class _RunContext:
                 spread=sig.spread,
             )
             decision = self.risk.check(proposal, st)
+            if m.market_id in st.open_markets:
+                decision.approved = False
+                decision.reasons.append("ALREADY_IN_MARKET")
             sid = self._signal(kind="research", market_id=m.market_id, question=m.question,
                                outcome=sig.outcome, expected_net_usd=sig.expected_net_usd,
                                edge=sig.edge, cost_usd=sig.cost_usd,
@@ -266,15 +282,20 @@ class _RunContext:
                                reasons=decision.reasons, details=details)
             if not decision.approved:
                 continue
+            end = m.end_date.isoformat() if m.end_date else None
             fill = self.executor.place(
                 run_id=self.run_id, signal_id=sid, market_id=m.market_id, token_id=sig.token_id,
                 outcome=sig.outcome, side="BUY", shares=sig.shares, limit_price=sig.limit_price,
-                signal_price=sig.signal_price, fee_rate=m.fee_rate,
+                signal_price=sig.signal_price, fee_rate=m.fee_rate, decision_book=book,
+                min_order_size=m.order_min_size, tick_size=m.tick_size, strategy="research",
+                decision_at=now,
                 position_info={"condition_id": m.condition_id, "question": m.question,
-                               "strategy": "research", "fee_rate": m.fee_rate,
-                               "end_date": m.end_date.isoformat() if m.end_date else None},
+                               "strategy": "research", "fee_rate": m.fee_rate, "end_date": end,
+                               "exit_conditions": exit_conditions("research", self.cfg.risk, end)},
             )
-            self.db.update_signal(sid, "EXECUTED" if fill.ok else "EXEC_FAILED", [fill.status])
+            self.db.update_signal(sid, "EXECUTED" if fill.ok else
+                                  ("EXEC_UNVERIFIED" if fill.uncertain_shares > 0 else "EXEC_FAILED"),
+                                  [f"{fill.status}_{fill.verification}"])
             if fill.ok:
                 out["executed"] += 1
                 self.remark()

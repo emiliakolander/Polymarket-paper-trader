@@ -6,10 +6,11 @@ private keys or order routes. It reads only public market data.
 ## What it does every cycle
 
 ```
-safety checks → run lock → crash repair → settle resolved markets
- → value positions at real bids → stop-losses → scan markets + order books
+safety checks → run lock → crash repair → settle resolved markets (MAIN + SHADOW)
+ → value positions at real bids → exit conditions → repair unhedged arbitrage legs
+ → scan markets + order books
  → YES/NO arbitrage scan → (optional, paid) Claude research → risk engine
- → realistic paper execution → equity snapshot → report + dashboard
+ → verified paper execution → equity snapshot → report, daily report, dashboard
 ```
 
 | Component | File | Notes |
@@ -33,17 +34,81 @@ safety checks → run lock → crash repair → settle resolved markets
 - Entries walk the **ask** side of the live order book, and exits/valuations walk the
   **bid** side. Taker fees are charged per level. Midpoints are never used.
 - Only a fraction (`depth_participation`, default 50%) of displayed size is assumed fillable.
-- Orders wait `latency_s`, then re-fetch the book. They fail if it is stale (`max_quote_age_s`),
-  if price moved past the limit, if liquidity is below the minimum order size, or by a
-  simulated rejection (2%).
 - Equity = cash + liquidation value of positions. This is conservative: an arbitrage pair is
   shown below its $1 payout until the market resolves.
 - An arbitrage is reported as a *theoretical* edge with explicit risk notes. It is never "risk-free".
+
+### Verified execution (a fill is never assumed from the first quote)
+
+Every simulated order goes through `paperbot/execution.py`:
+
+1. **Order validity, as the real CLOB would require (conservative):** the size is rounded
+   *down* to 0.01 shares, and the limit price is snapped to the market's tick size (from
+   the book, else Gamma `orderPriceMinTickSize`). The order must be at least the market's
+   minimum order size (from the book, else Gamma `orderMinSize`) and worth at least $1.
+   Orders are **never enlarged** to meet a minimum. A $3 order at 0.70 (4.28 shares, below
+   a 5-share minimum) is rejected as `FAILED_MIN_SIZE`, and the matching research signal
+   as `BELOW_MARKET_MINIMUM`.
+2. **Latency:** 1.0 s plus 0–0.5 s of seeded jitter. The order "arrives" later than the decision.
+3. **Execution book:** a fresh `/book` snapshot at arrival. Possible failures:
+   `FAILED_API`, `FAILED_BAD_BOOK`, `FAILED_STALE`, `FAILED_REJECTED` (simulated 2%), and
+   `FAILED_NO_LIQUIDITY` (nothing at or better than the limit). The fill is computed as an
+   immediate-or-cancel taker order walking real levels: `FILLED` or `PARTIAL`.
+4. **Verification against subsequent market data:** 2 more snapshots, 2 s apart. Only shares
+   whose liquidity at or better than the limit is still present in **every** later snapshot
+   are `CONFIRMED`. They are priced at the **worst** of the execution and verification books.
+   - Liquidity that shrank → `PARTIALLY_CONFIRMED`.
+   - Liquidity that vanished, or a verification snapshot that failed → `UNCERTAIN`.
+5. **Two books:**
+   - **MAIN** holds only confirmed shares. It is the $1,000 virtual portfolio, and every
+     performance number uses it.
+   - **SHADOW** holds unverified buy shares. They are tracked, marked and settled, but
+     reported separately and **never counted**.
+   - An unverified sell leaves the MAIN position open; it is retried on the next exit check.
+6. **No phantom re-entry:** because we never really trade, the book keeps showing the
+   liquidity we "took". The bot therefore never opens a second position in a market where
+   it already holds one (`ALREADY_IN_MARKET`).
+
+Every order row stores: decision time, the intended order (shares, limit, notional), the
+liquidity seen at decision / execution / each verification sample (best bid and ask,
+spread, shares and value at the limit, minimum size, tick, hash), status, verification
+result, confirmed and unverified shares, average price, fees, timing (latency, timestamps),
+and a link to the resulting position. Positions store their exit conditions (fixed at
+entry), and every valuation is appended to `position_marks` (mark-to-market history).
+
+### Arbitrage execution rules
+
+- Both legs use the same share count after rounding, each at or above the market minimum
+  size and the $1 minimum value, with enough depth on both ladders.
+- **One-leg failure scenarios** are computed before trading: the loss if leg 1 fills, leg 2
+  fails, and leg 1 is sold back at the live bids, for both leg orders. Above
+  `max_one_leg_loss_usd` ($3) the opportunity is rejected (`ONE_LEG_RISK_TOO_HIGH`).
+- Execution: the thinner leg goes first. Leg 2 is sent only for the *confirmed* leg-1 shares.
+  - Leg 1 unverified → leg 2 is not sent (`LEG1_UNVERIFIED`).
+  - Leg 2 failed, partial or unverified → the excess leg-1 shares are sold back
+    (`LEG_RISK_UNWOUND`), or held if that sale fails (`LEG_RISK_OPEN`).
+  - Every run retries selling unhedged excess (`unhedged_repair`) if it meets the minimum.
+
+### Daily report (`report/daily/YYYY-MM-DD.md` + `.json`)
+
+Written for today and yesterday on every run, or on demand with
+`python -m paperbot daily-report --out DIR --date YYYY-MM-DD`. Sections:
+
+1. **Hypothetical opportunities**: everything the scanners recorded, with theoretical net
+   at quoted prices. Explicitly not achievable P&L.
+2. **Conservatively simulated executions**: the full decision record of every order,
+   including realized and mark-to-market P&L of the resulting position.
+3. **Completed positions**: closed or settled that day. An arbitrage pair counts as one trade.
+4. **Unresolved positions**: open at the end of that day, valued from the mark history.
+   Unverified shadow positions are listed separately.
+5. **Net performance after all costs**: equity change (includes fees and slippage) minus
+   AI API costs and infrastructure costs, for the day and since start.
 
 ### Risk limits (config/paperbot.yaml → `risk`)
 
 | Rule | Default |
 |---|---|
+| Intended size | research $3, arbitrage $10 per pair; rejected if below market minimums |
 | Max cost of a new position | 5% of equity ($50 at start) |
 | Max total exposure | 50% of equity |
 | Max per market | 8% of equity |
@@ -120,12 +185,22 @@ A refused request is recorded and skipped instead.
 - Hourly scheduling will rarely catch real arbitrage. Those gaps are usually closed within
   seconds by faster bots. Expect mostly "near misses" and rejections. That is a realistic result, not a bug.
 - Fee categories are inferred from Gamma category/tag labels. Unknown categories get the highest rate.
+- Order-book "updates" are taken as repeated REST snapshots (execution + 2 verification
+  samples per order, plus one scan per run). The CLOB WebSocket stream is not used: its
+  message format could not be verified from the build container. Liquidity that appears
+  and disappears *between* samples is not observed.
+- The $1 minimum order value and 0.01-share rounding are conservative assumptions, not
+  confirmed limits. The per-market minimum size and tick size come from live data.
+- Our simulated orders do not affect the real book. Verification shows that the liquidity
+  existed, not that nobody else took it first; the participation factor partly covers this.
 - Maker (limit-order resting) strategies are not simulated. Every order is a taker.
 - Multi-outcome (neg-risk event) arbitrage across markets is not implemented.
 
 ## Database tables
 
 `market_snapshots`, `book_snapshots` (pruned after 14 days), `signals` (approved/rejected with
-reasons), `research` (evidence, raw answer, cost), `orders` (every attempt incl. failures),
-`fills`, `positions`, `ledger` (all cash movements), `api_costs`, `equity_snapshots`, `runs`,
-`events` (errors, halts, stop-losses).
+reasons), `research` (evidence, raw answer, cost), `orders` (every attempt incl. failures, with
+liquidity observations, verification and timing), `fills` (MAIN/SHADOW), `positions`
+(MAIN/SHADOW, exit conditions), `position_marks` (mark-to-market history), `ledger` (all cash
+movements, MAIN/SHADOW), `api_costs`, `equity_snapshots`, `runs`, `events` (errors, halts,
+exits). Older v1 databases are migrated in place on startup.

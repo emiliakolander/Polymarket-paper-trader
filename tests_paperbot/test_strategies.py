@@ -91,32 +91,45 @@ def test_midpoint_arb_illusion_is_rejected(cfg):
     assert not arbitrage.evaluate(m, cfg.arbitrage, NOW).ok
 
 
-def test_real_arb_sized_by_depth_and_net_of_fees(cfg):
-    # Geopolitics: 0% fee. Level 1: 0.45+0.50 = 0.95; level 2 for YES at 0.52 -> 1.02 stop.
+def test_real_arb_sized_by_target_and_rounded_to_valid_shares(cfg):
+    # Geopolitics: 0% fee. 0.45 + 0.50 = 0.95/pair. Target pair cost $10 -> 10.526 -> 10.52 shares.
     m = market_with_books(cfg, yes_asks=[(0.45, 40), (0.52, 1000)], no_asks=[(0.50, 1000)])
-    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW)
+    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW, exec_cfg=cfg.execution)
     assert ev.ok, ev.reasons
-    assert ev.shares == pytest.approx(20)  # 40 displayed * 50% participation
-    assert ev.cost_usd == pytest.approx(20 * 0.95)
-    assert ev.net_usd == pytest.approx(20 * 0.05)
+    assert ev.shares == pytest.approx(10.52)
+    assert ev.cost_usd == pytest.approx(10.52 * 0.95)
+    assert ev.net_usd == pytest.approx(10.52 * 0.05)
     assert ev.yes_limit == 0.45 and ev.no_limit == 0.50
+    # One-leg failure: buy 10.52 at ask, sell back at bid 0.30 (fixture bids).
+    assert ev.one_leg_loss["YES_first"] == pytest.approx(10.52 * (0.45 - 0.30))
+    assert ev.one_leg_loss["NO_first"] == pytest.approx(10.52 * (0.50 - 0.30))
+
+
+def test_arb_sized_by_depth_when_target_is_large(cfg):
+    c = load_config(overrides={"database_path": cfg.database_path,
+                               "arbitrage": {"target_pair_cost_usd": 100, "max_one_leg_loss_usd": 100}})
+    m = market_with_books(c, yes_asks=[(0.45, 40), (0.52, 1000)], no_asks=[(0.50, 1000)])
+    ev = arbitrage.evaluate(m, c.arbitrage, NOW, exec_cfg=c.execution)
+    assert ev.ok and ev.shares == pytest.approx(20)  # 40 displayed * 50% participation
 
 
 def test_arb_with_fees_accounts_each_leg(cfg):
     m = market_with_books(cfg, yes_asks=[(0.40, 1000)], no_asks=[(0.50, 1000)], category="Politics")
-    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW, budget_usd=30)
+    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW, budget_usd=8, exec_cfg=cfg.execution)
     unit = 0.40 + 0.50 + 0.04 * 0.4 * 0.6 + 0.04 * 0.5 * 0.5
-    assert ev.cost_usd == pytest.approx(30)
-    assert ev.shares == pytest.approx(30 / unit)
-    assert ev.fees_usd == pytest.approx(ev.shares * (unit - 0.90))
+    q = int(8 / unit * 100) / 100
+    assert ev.shares == pytest.approx(q)
+    assert ev.cost_usd == pytest.approx(q * unit) and ev.cost_usd <= 8
+    assert ev.fees_usd == pytest.approx(q * (unit - 0.90))
     assert "Not risk-free" in ev.details()["risk_notes"][0]
 
 
-def test_arb_rejects_thin_depth_and_empty_book(cfg):
-    m = market_with_books(cfg, yes_asks=[(0.45, 4)], no_asks=[(0.50, 1000)])
-    assert "INSUFFICIENT_DEPTH" in arbitrage.evaluate(m, cfg.arbitrage, NOW).reasons
+def test_arb_rejects_below_market_minimum_and_empty_book(cfg):
+    m = market_with_books(cfg, yes_asks=[(0.45, 4)], no_asks=[(0.50, 1000)])  # 2 usable < min 5
+    assert "BELOW_MARKET_MINIMUM" in arbitrage.evaluate(m, cfg.arbitrage, NOW,
+                                                        exec_cfg=cfg.execution).reasons
     m2 = market_with_books(cfg, yes_asks=[], no_asks=[(0.50, 1000)])
-    assert arbitrage.evaluate(m2, cfg.arbitrage, NOW).reasons == ["EMPTY_BOOK"]
+    assert arbitrage.evaluate(m2, cfg.arbitrage, NOW, exec_cfg=cfg.execution).reasons == ["EMPTY_BOOK"]
 
 
 def _exec(cfg, session):
@@ -129,7 +142,7 @@ def _exec(cfg, session):
 
 def test_arb_execution_hedged(cfg, paper_env):
     m = market_with_books(cfg, yes_asks=[(0.45, 40)], no_asks=[(0.50, 1000)])
-    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW)
+    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW, exec_cfg=cfg.execution)
     s = FakeSession()
     books = {m.yes_token: raw_book(m.yes_token, [(0.30, 100)], [(0.45, 40)]),
              m.no_token: raw_book(m.no_token, [(0.30, 100)], [(0.50, 1000)])}
@@ -137,13 +150,14 @@ def test_arb_execution_hedged(cfg, paper_env):
     ex, db = _exec(cfg, s)
     out = arbitrage.execute(ex, ev, "r", "sig", unwind_unhedged=True)
     assert out.status == "HEDGED"
-    assert out.hedged_shares == pytest.approx(20)
-    assert db.cash() == pytest.approx(1000 - 20 * 0.95)
+    assert out.hedged_shares == pytest.approx(10.52)
+    assert db.cash() == pytest.approx(1000 - 10.52 * 0.95)
+    assert all(l.verification == "CONFIRMED" for l in out.legs)
 
 
 def test_arb_leg_risk_second_leg_vanishes_then_unwound(cfg, paper_env):
     m = market_with_books(cfg, yes_asks=[(0.45, 40)], no_asks=[(0.50, 1000)])
-    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW)
+    ev = arbitrage.evaluate(m, cfg.arbitrage, NOW, exec_cfg=cfg.execution)
     s = FakeSession()
     # YES is the thinner leg -> bought first. NO liquidity disappears before leg 2.
     books = {m.yes_token: raw_book(m.yes_token, [(0.40, 100)], [(0.45, 40)]),
@@ -153,9 +167,9 @@ def test_arb_leg_risk_second_leg_vanishes_then_unwound(cfg, paper_env):
     out = arbitrage.execute(ex, ev, "r", "sig", unwind_unhedged=True)
     assert out.legs[1].status == "FAILED_NO_LIQUIDITY"
     assert out.status == "LEG_RISK_UNWOUND"
-    # Bought 20 YES at 0.45 (=9.00), sold 20 at 0.40 (=8.00): a real $1 loss, no fee (geopolitics).
-    assert db.cash() == pytest.approx(1000 - 1.0)
-    assert db.realized_pnl() == pytest.approx(-1.0)
+    # Bought 10.52 YES at 0.45, sold 10.52 at 0.40: a real loss, no fee (geopolitics).
+    assert db.cash() == pytest.approx(1000 - 10.52 * 0.05)
+    assert db.realized_pnl() == pytest.approx(-10.52 * 0.05)
     assert db.open_positions() == []
 
 

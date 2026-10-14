@@ -48,8 +48,9 @@ fees:
 
 arbitrage:
   min_net_edge_pct: 0.01              # net profit / cost after fees, >= 1%
-  min_net_profit_usd: 0.50
-  max_trade_usd: 50.0                 # per opportunity (risk engine also caps)
+  min_net_profit_usd: 0.10
+  target_pair_cost_usd: 10.0          # intended cost of YES+NO; never upsized to meet minimums
+  max_one_leg_loss_usd: 3.0           # max loss if leg 2 fails and leg 1 is sold back at bids
   depth_participation: 0.5            # assume we only get 50% of displayed size
   slippage_buffer: 0.003              # extra $/share-pair safety margin
   max_days_to_resolution: 90          # capital lock-up limit
@@ -66,8 +67,8 @@ research:
   recheck_hours: 72                   # don't re-research a market sooner
   min_edge: 0.05                      # p_model - executable price, after fees
   min_confidence: 0.6
-  kelly_fraction: 0.25
-  max_trade_usd: 40.0
+  kelly_fraction: 0.25                # cap: never more than this fraction of Kelly
+  target_order_usd: 3.0               # intended size; REJECTED (not upsized) if below market minimums
   min_evidence_items: 2
 
 budget:
@@ -82,13 +83,14 @@ budget:
     claude-sonnet-5-5: [2.0, 10.0]
     claude-haiku-5-5: [0.10, 0.50]
   unknown_model_pricing: [10.0, 50.0] # conservative fallback
+  infra_cost_usd_per_month: 0.0       # e.g. a VPS later; deducted in daily net performance
 
 risk:
   max_position_pct: 0.05              # max cost of one new position vs equity
   max_total_exposure_pct: 0.50        # all open positions vs equity
   max_per_market_pct: 0.08
   max_open_positions: 10
-  min_trade_usd: 5.0
+  min_trade_usd: 1.0                  # market minimums are enforced separately
   min_cash_reserve_pct: 0.20
   max_spread: 0.05                    # research trades: best ask - best bid
   max_quote_age_s: 30                 # order book must be this fresh
@@ -97,10 +99,18 @@ risk:
   max_trades_per_day: 10
   min_hours_to_resolution: 2
   stop_loss_pct: 0.35                 # research positions, on liquidation value
+  take_profit_pct: 0.0                # 0 = disabled: hold to resolution
 
 execution:
-  latency_s: 1.0                      # delay between decision and "order"
+  latency_s: 1.0                      # base delay between decision and order arrival
+  latency_jitter_s: 0.5               # + uniform random 0..jitter (seeded per order)
+  verify_delay_s: 2.0                 # wait between verification book samples
+  verify_samples: 2                   # later snapshots that must still show the liquidity
   limit_slippage_pct: 0.02            # never pay > signal price * (1 + this)
   depth_participation: 0.5
   random_reject_rate: 0.02            # simulated exchange/order rejections
   unwind_unhedged: true               # arbitrage: sell the orphan leg
+  # Conservative order-validity assumptions (see docs/PAPERBOT.md):
+  min_marketable_notional_usd: 1.0    # marketable orders below $1 are treated as invalid
+  share_decimals: 2                   # order sizes rounded DOWN to 0.01 shares
+  default_tick_size: 0.01             # used only if neither book nor Gamma gives a tick size

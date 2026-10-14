@@ -4,6 +4,7 @@
   python -m paperbot loop --interval 300                        always-on mode
   python -m paperbot report  --out DIR                          write report.md + metrics.json
   python -m paperbot dashboard --out DIR                        write index.html
+  python -m paperbot daily-report --out DIR [--date YYYY-MM-DD] daily report (5 sections)
   python -m paperbot status                                     one-line summary
   python -m paperbot halt | resume                              manual kill switch for new entries
 """
@@ -16,6 +17,9 @@ import sys
 import time
 
 from paperbot.config import load_config
+from datetime import date, datetime, timedelta, timezone
+
+from paperbot.daily import write_daily
 from paperbot.dashboard import write_dashboard
 from paperbot.db import Database
 from paperbot.engine import Engine
@@ -28,6 +32,9 @@ def _outputs(cfg, args) -> None:
     try:
         if getattr(args, "report_dir", None):
             write_report(db, args.report_dir, cfg.budget.monthly_ai_cap_usd)
+            today = datetime.now(timezone.utc).date()
+            for day in (today - timedelta(days=1), today):   # yesterday is finalised after midnight
+                write_daily(db, args.report_dir, day, cfg.budget.infra_cost_usd_per_month)
         if getattr(args, "site_dir", None):
             write_dashboard(db, args.site_dir, cfg.budget.monthly_ai_cap_usd)
     finally:
@@ -49,6 +56,9 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--interval", type=int, default=300)
     for name in ("report", "dashboard"):
         sub.add_parser(name).add_argument("--out", required=True)
+    dp = sub.add_parser("daily-report")
+    dp.add_argument("--out", required=True)
+    dp.add_argument("--date", help="YYYY-MM-DD (UTC); default today")
     for name in ("status", "halt", "resume"):
         sub.add_parser(name)
     args = ap.parse_args(argv)
@@ -83,6 +93,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "report":
             write_report(db, args.out, cfg.budget.monthly_ai_cap_usd)
+        elif args.cmd == "daily-report":
+            day = date.fromisoformat(args.date) if args.date else datetime.now(timezone.utc).date()
+            print(write_daily(db, args.out, day, cfg.budget.infra_cost_usd_per_month))
         elif args.cmd == "dashboard":
             print(write_dashboard(db, args.out, cfg.budget.monthly_ai_cap_usd))
         elif args.cmd == "status":

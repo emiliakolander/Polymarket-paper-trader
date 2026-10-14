@@ -215,3 +215,38 @@ def walk(
         res.levels_used += 1
         res.fills.append((lvl.price, take))
     return res
+
+
+# ------------------------------------------------------------ order validity
+def round_down(x: float, decimals: int) -> float:
+    """Round DOWN to `decimals` (order sizes may never be rounded up)."""
+    if x <= 0:
+        return 0.0
+    f = 10 ** decimals
+    return math.floor(x * f + 1e-9) / f
+
+
+def floor_to_tick(price: float, tick: float) -> float:
+    """Largest valid price <= `price` (BUY limits)."""
+    n = math.floor(price / tick + 1e-9)
+    return round(n * tick, 10)
+
+
+def ceil_to_tick(price: float, tick: float) -> float:
+    """Smallest valid price >= `price` (SELL limits)."""
+    n = math.ceil(price / tick - 1e-9)
+    return round(n * tick, 10)
+
+
+def depth_at_limit(levels: list[Level], limit_price: Optional[float], side: str,
+                   participation: float = 1.0) -> float:
+    """Shares available up to the limit price (buy: asks <= limit, sell: bids >= limit)."""
+    total = 0.0
+    for lvl in levels:
+        if limit_price is not None:
+            if side == "buy" and lvl.price > limit_price + 1e-12:
+                break
+            if side == "sell" and lvl.price < limit_price - 1e-12:
+                break
+        total += lvl.size * participation
+    return total

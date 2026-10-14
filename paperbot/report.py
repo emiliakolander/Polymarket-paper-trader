@@ -35,7 +35,7 @@ def compute_metrics(db: Database, now: Optional[datetime] = None, cap_usd: float
     groups = db.q(
         "SELECT market_id, strategy, SUM(realized_pnl) pnl, "
         "SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END) open_legs "
-        "FROM positions GROUP BY market_id, strategy")
+        "FROM positions WHERE book='MAIN' GROUP BY market_id, strategy")
     closed = [g for g in groups if g["open_legs"] == 0]
     wins = sum(1 for g in closed if g["pnl"] > 1e-9)
     ms, me = month_bounds(now)
@@ -44,6 +44,9 @@ def compute_metrics(db: Database, now: Optional[datetime] = None, cap_usd: float
 
     orders = db.q("SELECT status, COUNT(*) c FROM orders GROUP BY status")
     order_counts = {r["status"]: r["c"] for r in orders}
+    verif = db.q("SELECT COALESCE(verification,'N/A') v, COUNT(*) c FROM orders GROUP BY v")
+    shadow = db.q1("SELECT COUNT(*) c, COALESCE(SUM(cost_basis),0) cost, "
+                   "COALESCE(SUM(mark_value),0) val FROM positions WHERE book='SHADOW' AND status='OPEN'")
     slippage = db.q1(
         "SELECT COALESCE(SUM((avg_price - signal_price) * filled_shares), 0) s FROM orders "
         "WHERE side='BUY' AND filled_shares > 0 AND signal_price > 0")["s"]
@@ -100,6 +103,9 @@ def compute_metrics(db: Database, now: Optional[datetime] = None, cap_usd: float
         "open_positions": len(db.open_positions()),
         "unmarked_positions": int(last["unmarked_positions"]) if last else 0,
         "orders": order_counts,
+        "verification": {r["v"]: r["c"] for r in verif},
+        "shadow_open_positions": shadow["c"], "shadow_cost": float(shadow["cost"]),
+        "shadow_value": float(shadow["val"]),
         "signals": signal_counts,
         "reject_reasons": dict(sorted(reject_reasons.items(), key=lambda kv: -kv[1])),
         "runs": {r["status"]: r["c"] for r in runs},
@@ -157,6 +163,9 @@ def render_markdown(m: dict, db: Database) -> str:
         "## Failures",
         "",
         f"- Orders by status: {m['orders'] or 'none'}",
+        f"- Fill verification: {m['verification'] or 'none'}",
+        f"- Unverified (shadow) open positions, NOT counted: {m['shadow_open_positions']} "
+        f"(cost {_usd(m['shadow_cost'])}, value now {_usd(m['shadow_value'])})",
         f"- Signals by status: {m['signals'] or 'none'}",
         f"- Top rejection reasons: {dict(list(m['reject_reasons'].items())[:10]) or 'none'}",
         "",

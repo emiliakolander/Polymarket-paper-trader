@@ -28,7 +28,7 @@ from paperbot.budget import AIBudget
 from paperbot.config import Config
 from paperbot.db import Database, iso
 from paperbot.fees import fee_per_share
-from paperbot.orderbook import walk
+from paperbot.orderbook import floor_to_tick, round_down, walk
 from paperbot.scanner import Market
 
 SYSTEM_PROMPT = """You are a careful forecasting analyst estimating the probability that a \
@@ -281,7 +281,14 @@ class ResearchSignal:
 
 def compute_signal(m: Market, r: ResearchResult, cfg: Config, equity: float,
                    max_order_usd: float) -> ResearchSignal:
-    rc = cfg.research
+    """Deterministic signal from a research result and the LIVE book.
+
+    Size = min(target_order_usd, risk cap, fractional Kelly). The order is then
+    checked as the real CLOB would: shares rounded down to valid size, at least the
+    market's minimum order size, at least the minimum order value. Too small ->
+    BELOW_MARKET_MINIMUM. The order is never enlarged to meet a minimum.
+    """
+    rc, ec = cfg.research, cfg.execution
     if r.status != "OK" or r.probability is None:
         return ResearchSignal(False, [f"RESEARCH_{r.status}"])
     reasons = []
@@ -289,6 +296,7 @@ def compute_signal(m: Market, r: ResearchResult, cfg: Config, equity: float,
         reasons.append("LOW_CONFIDENCE")
 
     best: Optional[ResearchSignal] = None
+    below_min = False
     for outcome, book, token, p in (("YES", m.yes_book, m.yes_token, r.probability),
                                     ("NO", m.no_book, m.no_token, 1 - r.probability)):
         if book is None or not book.asks:
@@ -298,25 +306,35 @@ def compute_signal(m: Market, r: ResearchResult, cfg: Config, equity: float,
         if c0 >= 1 or p <= c0:
             continue
         kelly = (p - c0) / (1 - c0)
-        budget = min(rc.max_trade_usd, max_order_usd, rc.kelly_fraction * kelly * equity)
+        budget = min(rc.target_order_usd, max_order_usd, rc.kelly_fraction * kelly * equity)
         if budget <= 0:
             continue
-        limit = min(top * (1 + cfg.execution.limit_slippage_pct), 0.99)
+        tick = book.tick_size or m.tick_size or ec.default_tick_size
+        limit = min(floor_to_tick(top * (1 + ec.limit_slippage_pct), tick), 1 - tick)
         w = walk(book.asks, max_notional=budget, limit_price=limit, fee_rate=m.fee_rate,
-                 participation=cfg.execution.depth_participation)
-        if w.shares <= 0:
+                 participation=ec.depth_participation)
+        shares = round_down(w.shares, ec.share_decimals)
+        min_size = max(book.min_order_size, m.order_min_size)
+        if shares <= 0 or shares + 1e-9 < min_size:
+            below_min = True
+            continue
+        w = walk(book.asks, max_shares=shares, limit_price=limit, fee_rate=m.fee_rate,
+                 participation=ec.depth_participation)
+        if w.notional + 1e-9 < ec.min_marketable_notional_usd:
+            below_min = True
             continue
         all_in = (w.notional + w.fees) / w.shares
         sig = ResearchSignal(
             ok=True, reasons=[], outcome=outcome, token_id=token, shares=w.shares,
-            cost_usd=w.notional + w.fees, vwap=w.vwap, limit_price=w.worst_price,
+            cost_usd=w.notional + w.fees, vwap=w.vwap, limit_price=limit,
             model_prob=p, edge=p - all_in, expected_net_usd=w.shares * (p - all_in),
             spread=book.spread, signal_price=top,
         )
         if best is None or sig.edge > best.edge:
             best = sig
     if best is None:
-        return ResearchSignal(False, reasons + ["NO_EDGE_AT_EXECUTABLE_PRICE"])
+        return ResearchSignal(False, reasons + (["BELOW_MARKET_MINIMUM"] if below_min
+                                                else ["NO_EDGE_AT_EXECUTABLE_PRICE"]))
     if best.edge < rc.min_edge:
         reasons.append("EDGE_BELOW_MINIMUM")
     best.reasons = reasons
